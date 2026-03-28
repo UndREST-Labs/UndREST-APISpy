@@ -1,0 +1,60 @@
+# Git files
+.git
+.gitignore
+.github
+
+# Documentation (will be added separately if needed)
+*.md
+!README.md
+
+# Docker files (not needed in image)
+Dockerfile*
+docker-compose.yml
+.dockerignore
+
+# Results directory (will be mounted as volume)
+results/
+*.sarif
+
+# CodeQL temporary files
+.codeql/
+*.qls
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+env/
+ENV/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Azure REST API specs clone (will be handled at runtime)
+azure-rest-api-specs/
+
+# Extracted source files
+database/azure-api-db/mnt/
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Build artifacts
+dist/
+build/
+*.egg-info/

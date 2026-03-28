@@ -1,0 +1,66 @@
+name: Update Extension Shards
+
+# Triggered automatically when UndREST-SpecQL publishes new shards,
+# or manually to force a refresh.
+on:
+  repository_dispatch:
+    types: [speql-shards-updated]
+
+  workflow_dispatch:
+    inputs:
+      speql_run_id:
+        description: 'UndREST-SpecQL workflow run ID (optional — leave blank to use latest release)'
+        required: false
+
+jobs:
+  update-shards:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout UndREST-APISpy
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install
+
+      - name: Download latest shards from UndREST-SpecQL release
+        run: |
+          mkdir -p inventory
+          gh release download shards-latest \
+            --repo UndREST-Labs/UndREST-SpecQL \
+            --pattern "api-index-sharded-*.zip" \
+            --dir inventory/ \
+            --clobber
+        env:
+          GH_TOKEN: ${{ secrets.SPEQL_READ_TOKEN }}
+
+      - name: Prepare extension shard data
+        run: |
+          python3 scripts/prepare_data.py \
+            --source-dir inventory/ \
+            --out extension/data/
+
+      - name: Commit updated shard data
+        if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git fetch origin "${GITHUB_REF_NAME}"
+          git checkout "${GITHUB_REF_NAME}"
+          git pull --rebase origin "${GITHUB_REF_NAME}"
+
+          git add extension/data/
+          if git diff --cached --quiet; then
+            echo "No shard data changes to commit."
+          else
+            git commit -m "chore: update extension shard data from UndREST-SpecQL [skip ci]"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          fi

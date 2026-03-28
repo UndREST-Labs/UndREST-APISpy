@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>APISpy</title>
+  <link rel="stylesheet" href="panel.css">
+</head>
+<body>
+  <header class="toolbar">
+    <span class="brand">AP👁️Spy</span>
+    <span class="brand-sub">SpecRecon DevTools</span>
+
+    <div class="toolbar-controls">
+      <span class="filter-label">Show:</span>
+      <div id="filter-group" class="filter-group" role="group" aria-label="Filter by status">
+        <button class="filter-btn active" data-status="all" title="Show all statuses">All</button>
+        <button class="filter-btn active" data-status="exact_match" title="Exact match">&#x2705; Exact</button>
+        <button class="filter-btn active" data-status="route_match_version_mismatch" title="Version mismatch">&#x26A0;&#xFE0F; Version</button>
+        <button class="filter-btn active" data-status="provider_known_route_unknown" title="Unknown route">&#x1F536; Route</button>
+        <button class="filter-btn active" data-status="no_spec_match" title="No spec match">&#x274C; No match</button>
+        <button class="filter-btn active" data-status="arm_root_route" title="ARM root route">&#x2139;&#xFE0F; ARM root</button>
+      </div>
+
+      <button id="btn-autoscroll" class="btn-toggle active" title="Auto-scroll to newest request (click to toggle)">Scroll</button>
+      <button id="btn-copy-all" title="Copy all visible rows to clipboard">Copy list</button>
+      <button id="btn-csv" title="Save all results to CSV file">Save CSV</button>
+      <button id="btn-clear" title="Clear all observed requests">Clear</button>
+    </div>
+
+    <div class="status-bar">
+      <span id="status-text">Initialising...</span>
+      <span id="request-count" class="count-badge">0</span>
+    </div>
+  </header>
+
+  <main>
+    <table id="request-table" class="request-table">
+      <thead>
+        <tr>
+          <th class="col-time">Time</th>
+          <th class="col-method">Method<button class="col-filter-btn" data-col="method" title="Filter by Method">▾</button></th>
+          <th class="col-host">Host</th>
+          <th class="col-path">Path</th>
+          <th class="col-version">api-version<button class="col-filter-btn" data-col="apiVersion" title="Filter by api-version">▾</button></th>
+          <th class="col-status">Status<button class="col-filter-btn" data-col="status" title="Filter by Status">▾</button></th>
+          <th class="col-reason">Reason<button class="col-filter-btn" data-col="reason" title="Filter by Reason">▾</button></th>
+          <th class="col-shard">Shard<button class="col-filter-btn" data-col="shard" title="Filter by Shard">▾</button></th>
+        </tr>
+      </thead>
+      <tbody id="request-tbody">
+        <!-- rows injected by panel.js -->
+      </tbody>
+    </table>
+
+    <div id="empty-state" class="empty-state">
+      <p>No requests observed yet.</p>
+      <p class="hint">Browse Azure/Microsoft API endpoints to see results here.</p>
+    </div>
+
+    <section id="detail-panel" class="detail-panel hidden" aria-live="polite">
+      <div id="detail-resizer" class="detail-resizer" title="Drag to resize panel"></div>
+      <div class="detail-toolbar">
+        <h2 id="detail-heading">Request detail</h2>
+        <button id="detail-find-network" class="detail-action-btn" title="Copy URL — paste in the Network panel search (Ctrl/Cmd+F) to locate this entry">Find in Network</button>
+        <button id="detail-copy" class="detail-action-btn" title="Copy entry to clipboard">Copy</button>
+        <button id="detail-close" class="detail-close" title="Close detail">&times;</button>
+      </div>
+      <dl id="detail-fields" class="detail-fields"></dl>
+    </section>
+
+    <!-- Column-level filter dropdown (shared, repositioned per column) -->
+    <div id="col-filter-dropdown" class="col-filter-dropdown hidden" role="dialog" aria-label="Column filter">
+      <div class="col-filter-header">
+        <label class="col-filter-all-label">
+          <input type="checkbox" id="col-filter-select-all" checked> Select All
+        </label>
+      </div>
+      <div id="col-filter-list" class="col-filter-list"></div>
+    </div>
+  </main>
+
+  <!-- lib order matters: loader must be first (no bundler in v1) -->
+  <script src="lib/filters.js"></script>
+  <script src="lib/normalizer.js"></script>
+  <script src="lib/loader.js"></script>
+  <script src="lib/matcher.js"></script>
+  <script src="panel.js"></script>
+</body>
+</html>

@@ -1,0 +1,14 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"><title>APISpy DevTools</title></head>
+<body>
+<!-- lib scripts must load before devtools.js so the sweep listener can use
+     Filters, Normalizer, Loader, and Matcher to process ARM requests fully
+     (one at a time as they arrive) rather than storing raw HAR slices. -->
+<script src="lib/filters.js"></script>
+<script src="lib/normalizer.js"></script>
+<script src="lib/loader.js"></script>
+<script src="lib/matcher.js"></script>
+<script src="devtools.js"></script>
+</body>
+</html>
