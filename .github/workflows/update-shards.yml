@@ -28,7 +28,7 @@ jobs:
           python-version: '3.x'
 
       - name: Install dependencies
-        run: pip install
+        run: pip install -r requirements.txt
 
       - name: Download latest shards from UndREST-SpecQL release
         run: |
