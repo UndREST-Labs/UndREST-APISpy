@@ -61,8 +61,8 @@ PORTAL_AUTH_TIMEOUT_S = 180
 # Default user data directory for persisting browser sessions between runs.
 DEFAULT_USER_DATA_DIR = Path.home() / ".apispy-sweep-session"
 
-REPO_ROOT      = Path(__file__).resolve().parent.parent.parent
-EXTENSION_DIR  = REPO_ROOT / "apispy" / "extension"
+REPO_ROOT      = Path(__file__).resolve().parent.parent
+EXTENSION_DIR  = REPO_ROOT / "extension"
 
 # ── Authentication ────────────────────────────────────────────────────────────
 

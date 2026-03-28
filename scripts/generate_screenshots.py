@@ -11,7 +11,7 @@ Output (written to demos/):
   apispy-detail.png    – table with a row selected and the detail panel open
 
 Usage (from the repository root):
-  python3 apispy/scripts/generate_screenshots.py
+  python3 scripts/generate_screenshots.py
 
 Dependencies:
   pip install playwright
@@ -26,8 +26,8 @@ from pathlib import Path
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 
-REPO_ROOT      = Path(__file__).resolve().parent.parent.parent
-EXTENSION_DIR  = REPO_ROOT / "apispy" / "extension"
+REPO_ROOT      = Path(__file__).resolve().parent.parent
+EXTENSION_DIR  = REPO_ROOT / "extension"
 DEMOS_DIR      = REPO_ROOT / "demos"
 
 # ── Local HTTP server ─────────────────────────────────────────────────────────
