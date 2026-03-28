@@ -38,6 +38,9 @@ jobs:
             --pattern "api-index-sharded-*.zip" \
             --dir inventory/ \
             --clobber
+          # Extract the zip so prepare_data.py finds inventory/shards/
+          ZIP=$(ls inventory/api-index-sharded-*.zip | head -1)
+          unzip -o "$ZIP" -d inventory/
         env:
           GH_TOKEN: ${{ secrets.SPEQL_READ_TOKEN }}
 
