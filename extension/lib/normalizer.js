@@ -562,10 +562,73 @@
     return normalised.join("/");
   }
 
+  // ── Pack-normaliser registry ─────────────────────────────────────────────────
+
+  /**
+   * Registry of custom request normalisers contributed by API packs.
+   * Each entry maps a pack ID to an object with two functions:
+   *
+   *   matchesRequest(host, path) → boolean
+   *     Return true when this pack's normaliser should handle the request.
+   *     Called before the default Azure ARM normaliser.
+   *
+   *   normalise(rawUrl, rawMethod) → { ok, method, host, pathname,
+   *                                    normalisedPath, armPath,
+   *                                    apiVersion, fullUrl, [error] }
+   *     Perform the full normalisation and return the same shape that the
+   *     built-in normalise() function returns.  The key `armPath` should
+   *     carry the most canonicalised form of the path — the matcher will
+   *     prefer it for shard lookup.  If the pack does not need a distinct
+   *     canonical form, set armPath equal to normalisedPath.
+   *
+   * Register a custom normaliser by calling Normalizer.registerPackNormaliser().
+   * @private
+   */
+  const _PACK_NORMALISERS = new Map();
+
+  /**
+   * Register (or replace) a custom request normaliser for the given pack.
+   *
+   * Custom normalisers are tested in registration order before the built-in
+   * Azure ARM normaliser.  The first one whose matchesRequest() returns true
+   * is used; the built-in normaliser is the final fallback.
+   *
+   * Example — registering a minimal normaliser for a hypothetical AWS pack:
+   * ```js
+   * Normalizer.registerPackNormaliser("aws-rest-api-specs", {
+   *   matchesRequest(host, _path) {
+   *     return host.endsWith(".amazonaws.com");
+   *   },
+   *   normalise(rawUrl, rawMethod) {
+   *     // … custom normalisation logic …
+   *     return { ok: true, method, host, pathname, normalisedPath,
+   *              armPath: normalisedPath, apiVersion, fullUrl: rawUrl };
+   *   },
+   * });
+   * ```
+   *
+   * @param {string} packId  Pack identifier (e.g. "aws-rest-api-specs").
+   * @param {{ matchesRequest(host: string, path: string): boolean,
+   *            normalise(rawUrl: string, rawMethod: string): object }} normaliser
+   */
+  function registerPackNormaliser(packId, normaliser) {
+    if (typeof normaliser.matchesRequest !== "function" ||
+        typeof normaliser.normalise !== "function") {
+      throw new TypeError(
+        "registerPackNormaliser: normaliser must have matchesRequest() and normalise() functions"
+      );
+    }
+    _PACK_NORMALISERS.set(packId, normaliser);
+  }
+
   /**
    * Parse and normalise all relevant fields from a raw request URL + method.
    *
-   * Normalisation is applied in two stages:
+   * If any pack-specific normaliser registered via registerPackNormaliser()
+   * claims the request (matchesRequest() returns true), it is delegated to
+   * that normaliser.  Otherwise the built-in two-stage Azure ARM normaliser is
+   * applied:
+   *
    *   1. Generic normalisation (normalisePath): replaces GUIDs and integers
    *      with {guid} and {id} — output is `normalisedPath`.
    *   2. Azure ARM structural templating (templateAzureArmPath): replaces
@@ -599,8 +662,17 @@
       return { ok: false, error: "invalid_url: " + String(err) };
     }
 
+    const host = parsed.hostname.toLowerCase();
+    const path = parsed.pathname;
+
+    // Delegate to the first pack-specific normaliser that claims this request.
+    for (const packNorm of _PACK_NORMALISERS.values()) {
+      if (packNorm.matchesRequest(host, path)) {
+        return packNorm.normalise(rawUrl, rawMethod);
+      }
+    }
+
     const method = (rawMethod || "GET").toUpperCase().trim();
-    const host   = parsed.hostname.toLowerCase();
     const pathname = parsed.pathname;
     const normalisedPath = normalisePath(pathname);
     // ARM structural templating requires BOTH conditions:
@@ -642,6 +714,7 @@
     isAzureArmHost,
     looksLikeArmPath,
     extractApiVersion,
+    registerPackNormaliser,
     TEMPLATE_RULES,
     ARM_SCOPE_RULES,
     // Read-only snapshots of the internal sets/arrays for diagnostics/tests only.

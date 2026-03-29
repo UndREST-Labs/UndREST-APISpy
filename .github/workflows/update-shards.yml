@@ -2,6 +2,10 @@ name: Update Extension Shards
 
 # Triggered automatically when UndREST-SpecQL publishes new shards,
 # or manually to force a refresh.
+#
+# To add shards for a new API pack, trigger this workflow manually and supply
+# the pack_id, pack_name and platform inputs.  Alternatively, add a dedicated
+# workflow that calls prepare_data.py with --merge --pack-id <id>.
 on:
   repository_dispatch:
     types: [speql-shards-updated]
@@ -11,6 +15,22 @@ on:
       speql_run_id:
         description: 'UndREST-SpecQL workflow run ID (optional — leave blank to use latest release)'
         required: false
+      pack_id:
+        description: 'Pack identifier written into the manifest (default: azure-rest-api-specs)'
+        required: false
+        default: 'azure-rest-api-specs'
+      pack_name:
+        description: 'Human-readable pack name (default: Azure REST API Specs)'
+        required: false
+        default: 'Azure REST API Specs'
+      platform:
+        description: 'Platform identifier, e.g. azure, aws, gcp (default: azure)'
+        required: false
+        default: 'azure'
+      merge:
+        description: 'Merge into existing manifest instead of replacing it (true/false)'
+        required: false
+        default: 'false'
 
 jobs:
   update-shards:
@@ -46,9 +66,20 @@ jobs:
 
       - name: Prepare extension shard data
         run: |
+          PACK_ID="${{ github.event.inputs.pack_id || 'azure-rest-api-specs' }}"
+          PACK_NAME="${{ github.event.inputs.pack_name || 'Azure REST API Specs' }}"
+          PLATFORM="${{ github.event.inputs.platform || 'azure' }}"
+          MERGE_FLAG=""
+          if [ "${{ github.event.inputs.merge }}" = "true" ]; then
+            MERGE_FLAG="--merge"
+          fi
           python3 scripts/prepare_data.py \
             --source-dir inventory/ \
-            --out extension/data/
+            --out extension/data/ \
+            --pack-id "$PACK_ID" \
+            --pack-name "$PACK_NAME" \
+            --platform "$PLATFORM" \
+            $MERGE_FLAG
 
       - name: Commit updated shard data
         if: github.event_name == 'repository_dispatch' || github.event_name == 'workflow_dispatch'

@@ -22,6 +22,7 @@
       </div>
 
       <button id="btn-autoscroll" class="btn-toggle active" title="Auto-scroll to newest request (click to toggle)">Scroll</button>
+      <button id="btn-packs" title="View and select active API packs">Packs</button>
       <button id="btn-copy-all" title="Copy all visible rows to clipboard">Copy list</button>
       <button id="btn-csv" title="Save all results to CSV file">Save CSV</button>
       <button id="btn-clear" title="Clear all observed requests">Clear</button>
@@ -76,6 +77,23 @@
         </label>
       </div>
       <div id="col-filter-list" class="col-filter-list"></div>
+    </div>
+
+    <!-- Pack settings dialog -->
+    <div id="pack-dialog" class="pack-dialog hidden" role="dialog" aria-label="API pack settings" aria-modal="true">
+      <div class="pack-dialog-header">
+        <h2 class="pack-dialog-title">API Packs</h2>
+        <button id="pack-dialog-close" class="pack-dialog-close" title="Close">&times;</button>
+      </div>
+      <p class="pack-dialog-hint">
+        Enable or disable bundled API packs. Changes take effect on the next
+        request (or clear existing results to re-classify them).
+      </p>
+      <div id="pack-list" class="pack-list"></div>
+      <div class="pack-dialog-footer">
+        <button id="pack-apply" class="pack-apply-btn">Apply &amp; Clear Results</button>
+        <button id="pack-cancel" class="pack-cancel-btn">Cancel</button>
+      </div>
     </div>
   </main>
 
