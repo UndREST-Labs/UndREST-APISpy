@@ -2,5 +2,6 @@
 # Python dependencies for portal sweep and shard preparation
 
 # For portal_sweep.py — Azure Portal APISpy sweep
+# For provider_ops_sweep.py — Azure provider operations enumeration
 azure-identity>=1.15.0  # DeviceCodeCredential for Azure CLI first-party app auth
 playwright>=1.40.0      # Browser automation (run: python -m playwright install chromium)
