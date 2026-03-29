@@ -202,7 +202,8 @@ class ClassificationRule:
 #                 secret-extraction, key-extraction, data-exfiltration,
 #                 privilege-escalation, identity-impersonation,
 #                 trust-boundary-crossing, bypass-pattern, persistence,
-#                 lateral-movement, destructive-action, exposure-change
+#                 lateral-movement, destructive-action, exposure-change,
+#                 topology-change
 #   confidence  — suffix-derived, keyword-match, resource-path-heuristic,
 #                 provider-heuristic
 
@@ -232,19 +233,15 @@ _CLASSIFICATION_RULES: list[ClassificationRule] = [
         reason="matched keyword 'runCommand'",
     ),
     ClassificationRule(
-        keywords=("execute",),
+        keywords=("execute", "script", "command"),
         capability_tags=("execution",),
         risk_tags=("remote-execution", "control-plane-to-data-plane"),
         score=4,
-        reason="matched keyword 'execute'",
+        reason="matched keyword 'execute'/'script'/'command'",
     ),
-    ClassificationRule(
-        keywords=("run",),
-        capability_tags=("execution",),
-        risk_tags=("remote-execution",),
-        score=2,
-        reason="matched keyword 'run'",
-    ),
+    # NOTE: bare "run" is intentionally excluded here — it is far too common
+    # in non-execution contexts (e.g. "analysisRuns", "pipelineRuns").
+    # Only explicit execution keywords above qualify as remote-execution.
     ClassificationRule(
         keywords=("trigger", "sync"),
         capability_tags=("execution", "invocation"),
@@ -537,11 +534,11 @@ _CLASSIFICATION_RULES: list[ClassificationRule] = [
         reason="matched keyword 'import'",
     ),
     ClassificationRule(
-        keywords=("move",),
+        keywords=("move", "migrate", "reassign"),
         capability_tags=("data-movement",),
-        risk_tags=("destructive-action",),
+        risk_tags=("topology-change",),
         score=2,
-        reason="matched keyword 'move'",
+        reason="matched keyword 'move'/'migrate'/'reassign'",
     ),
     ClassificationRule(
         keywords=("backup",),
@@ -589,7 +586,8 @@ _CLASSIFICATION_RULES: list[ClassificationRule] = [
     ClassificationRule(
         keywords=("rule", "policy"),
         capability_tags=("configuration",),
-        risk_tags=("persistence",),
+        # rule/policy operations define configuration constraints — not
+        # persistence mechanisms — so no persistence risk tag here.
         score=1,
         reason="matched policy/rule keyword",
     ),
@@ -630,6 +628,7 @@ _RISK_TAG_BOOSTS: dict[str, int] = {
     "credential-proxy":            3,
     "identity-impersonation":      3,
     "control-plane-to-data-plane": 2,
+    "topology-change":             1,
 }
 
 # Base riskScore contribution from the suffix kind alone.
@@ -945,6 +944,129 @@ def _merge_tags(*tag_sequences: tuple | list) -> list[str]:
     return sorted(merged)
 
 
+def _derive_is_control_plane_bridge(
+    action_segment_lower: str,
+    risk_tags: list[str],
+) -> bool:
+    """Return True when the operation acts as a control-plane-to-data-plane bridge.
+
+    A bridge operation lets the control plane reach across into the data plane
+    (or a third-party back-end) — the defining UndREST risk concept.
+
+    Detection heuristics (any one is sufficient):
+    - The action segment contains an explicit invocation keyword.
+    - The accumulated risk tags already contain 'control-plane-to-data-plane'.
+    """
+    # Keywords that indicate direct data-plane invocation from the control plane.
+    _BRIDGE_KEYWORDS = (
+        "invoke", "dynamicinvoke", "execute", "runcommand",
+        "script", "command", "connections", "pipeline",
+    )
+    return (
+        any(kw in action_segment_lower for kw in _BRIDGE_KEYWORDS)
+        or "control-plane-to-data-plane" in risk_tags
+    )
+
+
+# Graph edge types for the Azure Atlas model.  Each operation can contribute
+# to one or more edge types depending on its classification.
+_EDGE_TYPE_SIGNALS: dict[str, dict[str, tuple[str, ...]]] = {
+    "execution": {
+        "capability_tags": ("execution", "invocation"),
+    },
+    "identity": {
+        "capability_tags": ("identity-management",),
+        "sensitivity_tags": ("identity-boundary", "role-boundary"),
+    },
+    "data": {
+        "capability_tags": ("data-access", "data-movement", "export", "import"),
+    },
+    "network": {
+        "capability_tags": ("network-control",),
+        "sensitivity_tags": ("network-boundary",),
+    },
+    "trust": {
+        "sensitivity_tags": ("cross-resource-trust",),
+        "risk_tags": ("trust-boundary-crossing", "lateral-movement"),
+    },
+}
+
+
+def _derive_edge_types(
+    capability_tags: list[str],
+    sensitivity_tags: list[str],
+    risk_tags: list[str],
+) -> list[str]:
+    """Return graph edge type labels for the Atlas graph model.
+
+    Edge types indicate the *relationship kind* this operation creates or
+    modifies.  An operation may contribute multiple edge types.
+
+    Values: "execution", "identity", "data", "network", "trust"
+    """
+    edges: set[str] = set()
+    for edge, signals in _EDGE_TYPE_SIGNALS.items():
+        if any(t in capability_tags for t in signals.get("capability_tags", ())):
+            edges.add(edge)
+        if any(t in sensitivity_tags for t in signals.get("sensitivity_tags", ())):
+            edges.add(edge)
+        if any(t in risk_tags for t in signals.get("risk_tags", ())):
+            edges.add(edge)
+    return sorted(edges)
+
+
+def _derive_impact(
+    capability_tags: list[str],
+    sensitivity_tags: list[str],
+    risk_tags: list[str],
+) -> list[str]:
+    """Map operation tags to CIA triad impact categories.
+
+    Values: "confidentiality", "integrity", "availability"
+
+    This gives a first-pass approximation; human review is needed for
+    high-scoring operations.
+    """
+    impact: set[str] = set()
+
+    # Confidentiality — exposure of sensitive material or data egress
+    _CONF_SENSITIVITY = (
+        "key-material", "secret-material",
+        "credential-material", "token-material", "data-egress",
+    )
+    _CONF_RISK = ("key-extraction", "secret-extraction", "credential-proxy", "data-exfiltration")
+    if (
+        any(t in sensitivity_tags for t in _CONF_SENSITIVITY)
+        or any(t in risk_tags     for t in _CONF_RISK)
+    ):
+        impact.add("confidentiality")
+
+    # Integrity — privilege or trust changes that alter the security posture
+    _INTEG_SENSITIVITY = ("identity-boundary", "role-boundary", "cross-resource-trust")
+    _INTEG_RISK = (
+        "privilege-escalation", "identity-impersonation",
+        "trust-boundary-crossing", "bypass-pattern", "exposure-change",
+        "topology-change",
+    )
+    if (
+        any(t in sensitivity_tags for t in _INTEG_SENSITIVITY)
+        or any(t in risk_tags     for t in _INTEG_RISK)
+    ):
+        impact.add("integrity")
+
+    # Availability — destructive or overwrite operations
+    _AVAIL_SENSITIVITY = ("destructive-surface",)
+    _AVAIL_RISK        = ("destructive-action",)
+    if (
+        "delete" in capability_tags
+        or any(t in sensitivity_tags for t in _AVAIL_SENSITIVITY)
+        or any(t in risk_tags        for t in _AVAIL_RISK)
+    ):
+        impact.add("availability")
+
+    return sorted(impact)
+
+
 def classify_operation(
     raw_op: dict,
     risk_threshold: int = HIGH_RISK_THRESHOLD,
@@ -957,11 +1079,26 @@ def classify_operation(
     2. Derive baseline tags and score from the suffix kind.
     3. Match keyword classification rules against the action segment.
     4. Merge and deduplicate all tag sets.
+    4b. Read-operation guard: strip change-implying risk tags (exposure-change,
+        destructive-action, topology-change) that keyword rules may have added,
+        because read operations cannot cause state changes.
     5. Compute the final risk score with explainable reasons.
-    6. Assemble and return the complete detail record.
+    6. Derive service family and HTTP method.
+    7. Derive semantic fields: isControlPlaneBridge, edgeTypes, impact.
+    8. Assemble and return the complete detail record.
 
     Returns ``None`` for operations that cannot be parsed (name missing or
     fewer than two path segments).
+
+    Note on action-segment scoping
+    --------------------------------
+    Keyword rules are matched against ``parts[2:]`` only (everything after
+    the provider namespace and primary resource type).  This prevents resource
+    type names like "roleAssignments" or "firewallPolicies" from triggering
+    false positives on *all* operations of that resource.  The trade-off is
+    that 3-part operations (``Provider/ResourceType/suffix``) whose semantics
+    live entirely in the resource type name will have minimal keyword matches;
+    they are classified primarily via their suffix defaults.
     """
     name: str = raw_op.get("name", "")
     parsed    = parse_operation_name(name)
@@ -1004,6 +1141,15 @@ def classify_operation(
         *(r.confidence_tags for r in matched),
     )
 
+    # ── Stage 4b: read-operation false-positive guard ─────────────────────────
+    # Read operations cannot cause state changes, so strip any change-implying
+    # risk tags that keyword rules may have added.  Sensitivity tags are still
+    # allowed (reading a secret is still sensitive); only action-implying risk
+    # tags are removed.
+    if suffix_kind.lower() == "read":
+        _READ_STRIP = frozenset(("exposure-change", "destructive-action", "topology-change"))
+        risk_tags = [t for t in risk_tags if t not in _READ_STRIP]
+
     # ── Stage 5: risk scoring ─────────────────────────────────────────────────
     risk_score, risk_reasons = compute_risk_score(
         base_score    = suffix_defaults["base_score"],
@@ -1022,6 +1168,16 @@ def classify_operation(
     # returns lowercase suffixes (read/write/delete/action) but this guards
     # against any future casing variation.
     candidate_method = _SUFFIX_TO_METHOD.get(suffix_kind.lower(), "POST")
+
+    # ── Stage 7: derived semantic fields ─────────────────────────────────────
+    is_control_plane_bridge = _derive_is_control_plane_bridge(
+        action_segment_lower, risk_tags
+    )
+    edge_types = _derive_edge_types(capability_tags, sensitivity_tags, risk_tags)
+    impact     = _derive_impact(capability_tags, sensitivity_tags, risk_tags)
+
+    # reasonSummary: short human-readable string joining the top reasons.
+    reason_summary = "; ".join(risk_reasons) if risk_reasons else "no matched rules"
 
     # ── Assemble record ───────────────────────────────────────────────────────
     return {
@@ -1048,7 +1204,12 @@ def classify_operation(
         # Risk scoring
         "riskScore":           risk_score,
         "riskReasons":         risk_reasons,
+        "reasonSummary":       reason_summary,
         "isHighRisk":          is_high_risk,
+        # Semantic / graph fields
+        "isControlPlaneBridge": is_control_plane_bridge,
+        "edgeTypes":            edge_types,
+        "impact":               impact,
     }
 
 
@@ -1094,6 +1255,7 @@ def build_provider_summary(
         if (
             "destructive-surface" in op["sensitivityTags"]
             or "destructive-action" in op["riskTags"]
+            or "topology-change"   in op["riskTags"]
         )
     )
     network_exposure_actions   = sum(
