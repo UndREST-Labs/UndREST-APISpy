@@ -176,6 +176,8 @@ Each pill can be toggled independently to show only the desired classification(s
 
 The **Packs** button in the toolbar opens the pack settings dialog.  It lists every bundled API pack with its platform, provider count, and export date.  Enable or disable individual packs using the checkboxes, then click **Apply & Clear Results** to save the selection — the loader cache is reset and a fresh sweep begins against the chosen packs.  Your selection is persisted in browser storage across DevTools reloads.
 
+![APISpy pack selection dialog](../demos/apispy-packs.png)
+
 See **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)** to learn how to bundle shards for a new API platform.
 
 ### ARM batch inspection
