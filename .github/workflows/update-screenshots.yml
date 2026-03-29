@@ -1,0 +1,53 @@
+name: Update Screenshots
+
+# Triggered when changes to the extension directory are merged into main.
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'extension/**'
+
+  workflow_dispatch:
+
+# Prevent parallel runs so that the screenshot commit never races itself.
+concurrency:
+  group: update-screenshots
+  cancel-in-progress: false
+
+jobs:
+  update-screenshots:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: python -m playwright install chromium --with-deps
+
+      - name: Generate screenshots
+        run: python3 scripts/generate_screenshots.py
+
+      - name: Commit updated screenshots
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git add demos/
+          if git diff --cached --quiet; then
+            echo "No screenshot changes to commit."
+          else
+            git commit -m "chore: update screenshots [skip ci]"
+            git push origin HEAD:"${GITHUB_REF_NAME}"
+          fi
