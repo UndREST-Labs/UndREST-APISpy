@@ -49,11 +49,11 @@ html, body {
   flex-wrap: wrap;
 }
 
-.brand {
-  font-size: 15px;
-  font-weight: 700;
-  color: var(--brand);
-  letter-spacing: 0.03em;
+.brand-logo {
+  height: 28px;
+  width: 28px;
+  object-fit: contain;
+  display: block;
 }
 
 .brand-sub {
