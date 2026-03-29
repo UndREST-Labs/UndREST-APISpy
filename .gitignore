@@ -52,3 +52,4 @@ apispy/scripts/apispy-*.webm
 # Azure provider operations sweep output files (provider_ops_sweep.py)
 azure-provider-operations-*.json
 azure-provider-summary-*.json
+azure-top-risky-operations-*.json
