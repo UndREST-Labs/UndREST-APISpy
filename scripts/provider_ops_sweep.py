@@ -49,9 +49,11 @@ Usage
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import re
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -69,6 +71,15 @@ MANAGEMENT_BASE     = "https://management.azure.com"
 SUBSCRIPTIONS_API_VERSION = "2022-12-01"
 PROVIDERS_API_VERSION     = "2021-04-01"
 OPERATIONS_API_VERSION    = "2021-04-01"
+
+# ARM batch endpoint API version and request-count limit.
+# https://learn.microsoft.com/en-us/azure/azure-resource-manager/management/batch-requests
+BATCH_API_VERSION = "2015-11-01"
+BATCH_SIZE        = 20   # maximum sub-requests per ARM batch POST
+
+# Thread pool size for concurrent batch calls, pagination follow-ups, and
+# API-version retries.  Tune down if you hit ARM request-throttling (429).
+MAX_WORKERS = 10
 
 # ── Tunable threshold ─────────────────────────────────────────────────────────
 # Operations with riskScore >= HIGH_RISK_THRESHOLD are flagged as isHighRisk.
@@ -701,6 +712,75 @@ def _arm_get(url: str, token: str) -> dict[str, Any]:
         raise RuntimeError(f"HTTP {exc.code} from {url}: {snippet}") from exc
 
 
+def _arm_post(url: str, token: str, body: dict[str, Any]) -> dict[str, Any]:
+    """POST a JSON body to an ARM endpoint and return the JSON response body.
+
+    Uses a 120-second timeout to accommodate batch requests that may bundle
+    up to ``BATCH_SIZE`` sub-requests processed server-side.
+    """
+    data = json.dumps(body).encode()
+    req = urllib.request.Request(
+        url,
+        data=data,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "Content-Type":  "application/json",
+        },
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=120) as resp:
+            return json.loads(resp.read().decode())
+    except urllib.error.HTTPError as exc:
+        snippet = ""
+        try:
+            snippet = exc.read().decode()[:300]
+        except Exception:
+            pass
+        raise RuntimeError(f"HTTP {exc.code} from {url}: {snippet}") from exc
+
+
+# Regex to extract an HTTP status code from the RuntimeError strings produced
+# by _arm_get / _arm_post (format: "HTTP <code> from <url>: ...").
+_HTTP_CODE_RE = re.compile(r"HTTP (\d{3}) from ")
+
+
+def _extract_http_status(error_str: str) -> int | None:
+    """Return the HTTP status code embedded in a ``RuntimeError`` message, or ``None``."""
+    m = _HTTP_CODE_RE.search(error_str)
+    return int(m.group(1)) if m else None
+
+
+def _arm_batch_get(
+    batch_requests: list[dict[str, str]],
+    credential: object,
+) -> list[dict[str, Any]]:
+    """Submit up to ``BATCH_SIZE`` ARM GET requests via the ARM batch endpoint.
+
+    Each element of ``batch_requests`` must be a dict with:
+        ``name``  — arbitrary per-request identifier echoed in the response
+        ``url``   — full ARM URL to GET (including ``api-version`` query param)
+
+    Returns a list of response dicts, each containing:
+        ``name``           — echoed from the request
+        ``httpStatusCode`` — HTTP status code for that individual sub-request
+        ``content``        — parsed JSON response body, or ``None``
+
+    If the batch POST itself fails (network error, batch API unavailable, etc.),
+    the caller receives synthetic ``{"httpStatusCode": 0}`` entries for every
+    request in the chunk so that Phase 3 can fall back to individual retries.
+    """
+    token = credential.get_token(MANAGEMENT_SCOPE).token  # type: ignore[union-attr]
+    batch_url  = f"{MANAGEMENT_BASE}/batch?api-version={BATCH_API_VERSION}"
+    batch_body = {
+        "requests": [
+            {"httpMethod": "GET", "url": r["url"], "name": r["name"]}
+            for r in batch_requests
+        ]
+    }
+    result = _arm_post(batch_url, token, batch_body)
+    return result.get("responses", [])
+
+
 def _paginate(url: str, credential: object) -> list[dict]:
     """Walk a paged ARM list endpoint and return all items across all pages.
 
@@ -783,6 +863,57 @@ def _collect_provider_api_hints(providers: list[dict]) -> dict[str, list[str]]:
     return hints
 
 
+def _build_error_record(
+    namespace: str,
+    versions_attempted: list[str],
+    last_error: str,
+) -> dict[str, Any]:
+    """Build a structured error record for a namespace that could not be fetched.
+
+    Parses the ``RuntimeError`` string produced by ``_arm_get`` / ``_arm_post``
+    to extract the HTTP status code and, when available, the ARM error code and
+    message from the embedded JSON snippet.
+
+    The returned dict is suitable for inclusion in the errors output file.
+    """
+    http_status = _extract_http_status(last_error)
+
+    error_code:    str | None = None
+    error_message: str | None = None
+
+    # The error string format is "HTTP <code> from <url>: <json_body>".
+    # Using rfind(": {") correctly locates the separator before the JSON body,
+    # even when the URL itself contains colons (e.g. "https://").
+    json_sep = last_error.rfind(": {")
+    if json_sep != -1:
+        try:
+            snippet_json = json.loads(last_error[json_sep + 2:])
+            # Standard ARM error: {"error": {"code": "...", "message": "..."}}
+            if "error" in snippet_json:
+                error_code    = snippet_json["error"].get("code")
+                error_message = snippet_json["error"].get("message")
+            # OData error: {"odata.error": {"code": "...", "message": {"lang": ..., "value": ...}}}
+            elif "odata.error" in snippet_json:
+                odata = snippet_json["odata.error"]
+                error_code = odata.get("code")
+                msg_val    = odata.get("message")
+                if isinstance(msg_val, dict):
+                    error_message = msg_val.get("value")
+                elif isinstance(msg_val, str):
+                    error_message = msg_val
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+    return {
+        "provider":          namespace,
+        "versionsAttempted": versions_attempted,
+        "lastError":         last_error,
+        "httpStatusCode":    http_status,
+        "errorCode":         error_code,
+        "errorMessage":      error_message,
+    }
+
+
 def list_subscriptions(credential: object) -> list[dict]:
     """Return all subscriptions accessible to the authenticated identity."""
     url = (
@@ -807,7 +938,7 @@ def list_provider_operations(
     credential: object,
     namespace: str,
     api_version_hints: list[str] | None = None,
-) -> list[dict]:
+) -> tuple[list[dict], dict[str, Any] | None]:
     """Return all operations defined by a resource provider namespace.
 
     Tries ``OPERATIONS_API_VERSION`` first.  When ARM returns a 404 with an
@@ -818,13 +949,16 @@ def list_provider_operations(
     ``api_version_hints`` (typically derived from the provider's registered
     resource-type versions) are also tried as fallbacks in newest-first order.
 
-    Returns an empty list (with a warning) if all attempts fail, so that one
-    bad provider does not abort the sweep.
+    Returns a pair ``(operations, error_record)`` where:
+
+    * ``operations``   — list of raw operation dicts (empty when all attempts fail)
+    * ``error_record`` — a structured dict describing the failure, or ``None`` on success
     """
     # Build an ordered, deduplicated list of API versions to try.
     # ``OPERATIONS_API_VERSION`` is always first; hints follow newest-first.
     seen_versions: set[str] = set()
-    candidates: list[str] = []
+    candidates:    list[str] = []
+    versions_attempted: list[str] = []  # every version actually sent to ARM
 
     def _add_candidate(v: str) -> None:
         """Append v to candidates only if not already queued."""
@@ -845,12 +979,13 @@ def list_provider_operations(
     while idx < len(candidates):
         api_version = candidates[idx]
         idx += 1
+        versions_attempted.append(api_version)
         url = (
             f"{MANAGEMENT_BASE}/providers/{namespace}/operations"
             f"?api-version={api_version}"
         )
         try:
-            return _paginate(url, credential)
+            return _paginate(url, credential), None
         except Exception as exc:
             error_str = str(exc)
             last_error = error_str
@@ -874,11 +1009,12 @@ def list_provider_operations(
                         file=sys.stderr,
                     )
 
+    error_record = _build_error_record(namespace, versions_attempted, last_error)
     print(
         f"  WARNING: Could not fetch operations for {namespace}: {last_error}",
         file=sys.stderr,
     )
-    return []
+    return [], error_record
 
 
 # ── Classification pipeline ───────────────────────────────────────────────────
@@ -1422,16 +1558,161 @@ def build_provider_summary(
 # ── Main sweep ────────────────────────────────────────────────────────────────
 
 
+def _fetch_all_operations(
+    credential: object,
+    namespaces: list[str],
+    ns_api_hints: dict[str, list[str]],
+) -> tuple[dict[str, list[dict]], list[dict]]:
+    """Fetch raw operations for all provider namespaces using batch + threading.
+
+    Uses the ARM batch API to bundle up to ``BATCH_SIZE`` GET requests into a
+    single HTTP POST, dramatically reducing connection overhead when there are
+    hundreds of namespaces.  Multiple batch calls are dispatched concurrently
+    via a ``ThreadPoolExecutor``.
+
+    After the initial batch wave, any namespaces that need pagination follow-up
+    (``nextLink`` in the response) or API-version retries (``InvalidResourceType``
+    404) are handled with individual concurrent requests.
+
+    Returns:
+        ops_by_ns     — dict mapping each namespace to its list of raw operation dicts
+        error_records — list of structured error dicts for permanently failed namespaces
+    """
+    ops_by_ns:        dict[str, list[dict]] = {}
+    error_records:    list[dict]            = []
+    needs_retry:      list[str]             = []     # batch-failed, retry individually
+    pagination_queue: list[tuple[str, str]] = []     # (namespace, nextLink url)
+
+    total     = len(namespaces)
+    completed = 0
+    counter_lock = threading.Lock()
+
+    def _log_completion(ns: str) -> None:
+        """Print a thread-safe progress line to stderr."""
+        nonlocal completed
+        with counter_lock:
+            completed += 1
+            print(f"  [{completed}/{total}] {ns}", file=sys.stderr)
+
+    # ── Phase 1: initial batch wave ───────────────────────────────────────────
+    # Split namespaces into chunks of BATCH_SIZE and POST each chunk concurrently.
+    chunks = [
+        namespaces[i : i + BATCH_SIZE]
+        for i in range(0, len(namespaces), BATCH_SIZE)
+    ]
+
+    def _send_batch(chunk: list[str]) -> list[dict[str, Any]]:
+        """Submit one batch of initial GET requests; returns ARM response list."""
+        requests_payload = [
+            {
+                "name": ns,
+                "url": (
+                    f"{MANAGEMENT_BASE}/providers/{ns}/operations"
+                    f"?api-version={OPERATIONS_API_VERSION}"
+                ),
+            }
+            for ns in chunk
+        ]
+        try:
+            return _arm_batch_get(requests_payload, credential)
+        except Exception as exc:
+            # Batch call itself failed (network error, batch API unavailable,
+            # etc.).  Return synthetic 0-status entries so Phase 3 retries them.
+            print(
+                f"  WARNING: Batch request failed ({exc}); "
+                f"will retry {len(chunk)} namespace(s) individually.",
+                file=sys.stderr,
+            )
+            return [
+                {"name": ns, "httpStatusCode": 0, "content": None}
+                for ns in chunk
+            ]
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+        batch_futures = [executor.submit(_send_batch, chunk) for chunk in chunks]
+        for future in concurrent.futures.as_completed(batch_futures):
+            for resp in future.result():
+                ns      = resp.get("name", "")
+                status  = resp.get("httpStatusCode", 0)
+                content: dict[str, Any] | None = resp.get("content")
+
+                if status == 200 and content is not None:
+                    ops_by_ns[ns] = content.get("value", [])
+                    next_link     = content.get("nextLink")
+                    if next_link:
+                        pagination_queue.append((ns, next_link))
+                    _log_completion(ns)
+                else:
+                    # Any non-200 (incl. synthetic 0 from batch failure):
+                    # fall through to Phase 3 which uses the full version-fallback logic.
+                    needs_retry.append(ns)
+
+    # ── Phase 2: concurrent pagination follow-up ──────────────────────────────
+    # Some providers return very large operation lists that span multiple pages.
+    # Follow each nextLink concurrently; errors here are non-fatal (we keep
+    # whatever pages we already collected).
+    if pagination_queue:
+        def _follow_pages(ns: str, next_url: str) -> tuple[str, list[dict]]:
+            """Walk remaining pages for a namespace and return the extra items."""
+            extra: list[dict] = []
+            current: str | None = next_url
+            try:
+                while current:
+                    token   = credential.get_token(MANAGEMENT_SCOPE).token  # type: ignore[union-attr]
+                    data    = _arm_get(current, token)
+                    extra.extend(data.get("value", []))
+                    current = data.get("nextLink")
+            except Exception as exc:
+                print(
+                    f"  WARNING: Pagination failed for {ns}: {exc}",
+                    file=sys.stderr,
+                )
+            return ns, extra
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            pag_futures = [
+                executor.submit(_follow_pages, ns, url)
+                for ns, url in pagination_queue
+            ]
+            for future in concurrent.futures.as_completed(pag_futures):
+                ns, extra_ops = future.result()
+                # ops_by_ns[ns] is always set in Phase 1 for pagination-queue entries
+                # (only 200 responses with nextLink reach this queue).
+                ops_by_ns[ns].extend(extra_ops)
+
+    # ── Phase 3: individual retries for batch-failed namespaces ──────────────
+    # Uses the full list_provider_operations() logic which handles API-version
+    # fallback (registration hints + error-body extraction).
+    if needs_retry:
+        def _retry_one(ns: str) -> tuple[str, list[dict], dict[str, Any] | None]:
+            """Retry a single namespace with full version-fallback logic."""
+            hints     = ns_api_hints.get(ns.lower(), [])
+            ops, err  = list_provider_operations(credential, ns, hints)
+            _log_completion(ns)
+            return ns, ops, err
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            retry_futures = [executor.submit(_retry_one, ns) for ns in needs_retry]
+            for future in concurrent.futures.as_completed(retry_futures):
+                ns, ops, err = future.result()
+                ops_by_ns[ns] = ops
+                if err is not None:
+                    error_records.append(err)
+
+    return ops_by_ns, error_records
+
+
 def sweep(
     credential: object,
     risk_threshold: int = HIGH_RISK_THRESHOLD,
-) -> tuple[list[dict], list[dict]]:
+) -> tuple[list[dict], list[dict], list[dict]]:
     """Enumerate all providers and their operations.
 
-    Returns a pair ``(detail_records, summary_records)`` where:
+    Returns a triple ``(detail_records, summary_records, error_records)`` where:
 
-    * ``detail_records`` — one dict per (provider, resourceType, operationName).
+    * ``detail_records``  — one dict per (provider, resourceType, operationName).
     * ``summary_records`` — one dict per provider namespace.
+    * ``error_records``   — one dict per namespace that could not be fetched.
     """
     # ── Step 1: list subscriptions ────────────────────────────────────────────
     print("Enumerating subscriptions…", file=sys.stderr)
@@ -1443,8 +1724,8 @@ def sweep(
 
     # ── Step 2: collect unique provider namespaces ────────────────────────────
     print("Enumerating providers across subscriptions…", file=sys.stderr)
-    seen_namespaces: set[str]  = set()
-    all_namespaces:  list[str] = []
+    seen_namespaces: set[str]    = set()
+    all_namespaces:  list[str]   = []
     all_provider_data: list[dict] = []  # accumulate all provider objects for hint extraction
 
     for sub in subscriptions:
@@ -1475,22 +1756,25 @@ def sweep(
     # Build a per-namespace map of API version hints extracted from the
     # resourceTypes registration data.  These are used as fallbacks when the
     # default OPERATIONS_API_VERSION is rejected by a provider's operations
-    # endpoint.  The map key preserves original casing from ARM.
+    # endpoint.  Keys are lowercased for case-insensitive lookup.
     ns_api_hints = _collect_provider_api_hints(all_provider_data)
 
-    # ── Step 3: enumerate and classify operations per provider ────────────────
-    print("Enumerating provider operations…", file=sys.stderr)
+    # ── Step 3: enumerate operations per provider (batch + concurrent) ────────
+    print(
+        f"Enumerating provider operations "
+        f"(batch={BATCH_SIZE}, workers={MAX_WORKERS})…",
+        file=sys.stderr,
+    )
+    ops_by_ns, error_records = _fetch_all_operations(
+        credential, all_namespaces, ns_api_hints
+    )
+
+    # ── Step 4: classify operations and build detail / summary records ────────
     detail_records:  list[dict] = []
     summary_records: list[dict] = []
-    total                       = len(all_namespaces)
 
-    for idx, ns in enumerate(all_namespaces, start=1):
-        print(f"  [{idx}/{total}] {ns}", file=sys.stderr)
-        # Pass the API version hints collected from the provider's registered
-        # resource types as fallbacks; they are tried only if the default
-        # OPERATIONS_API_VERSION is rejected.
-        hints = ns_api_hints.get(ns.lower(), [])
-        raw_ops    = list_provider_operations(credential, ns, api_version_hints=hints)
+    for ns in all_namespaces:
+        raw_ops    = ops_by_ns.get(ns, [])
         parsed_ops = [
             record
             for op in raw_ops
@@ -1505,7 +1789,13 @@ def sweep(
         f"{len(summary_records)} provider(s).",
         file=sys.stderr,
     )
-    return detail_records, summary_records
+    if error_records:
+        print(
+            f"  ⚠ {len(error_records)} provider(s) could not be fetched "
+            f"(see errors output file).",
+            file=sys.stderr,
+        )
+    return detail_records, summary_records, error_records
 
 
 # ── Output helpers ────────────────────────────────────────────────────────────
@@ -1603,7 +1893,7 @@ def main() -> None:
     credential = authenticate_device_code()
 
     # ── Phase 2: sweep ────────────────────────────────────────────────────────
-    detail_records, summary_records = sweep(
+    detail_records, summary_records, error_records = sweep(
         credential, risk_threshold=args.risk_threshold
     )
 
@@ -1611,6 +1901,7 @@ def main() -> None:
     ts           = time.strftime("%Y-%m-%dT%H-%M-%S")
     detail_path  = args.output_dir / f"azure-provider-operations-{ts}.json"
     summary_path = args.output_dir / f"azure-provider-summary-{ts}.json"
+    errors_path  = args.output_dir / f"azure-provider-errors-{ts}.json"
 
     high_risk_count = sum(1 for op in detail_records if op["isHighRisk"])
     provider_count  = len(summary_records)
@@ -1637,8 +1928,18 @@ def main() -> None:
         ),
         indent=indent,
     )
+    _write_json(
+        errors_path,
+        _wrap_with_metadata(
+            error_records,
+            ts,
+            extra_meta={"totalErrors": len(error_records)},
+            risk_threshold=args.risk_threshold,
+        ),
+        indent=indent,
+    )
 
-    output_paths = [detail_path, summary_path]
+    output_paths = [detail_path, summary_path, errors_path]
 
     # ── Optional: top risky operations file ───────────────────────────────────
     if args.top_risky_count > 0:
