@@ -1,10 +1,8 @@
-# APISpy Portal Sweep
+# APISpy Azure Portal Sweep
 
-`portal_sweep.py` is a Playwright-based automation script that walks every
+`azure_portal_sweep.py` is a Playwright-based automation script that walks every
 service on the Azure Portal **All Services** page with the APISpy DevTools
 extension running, then exports the collected ARM API calls as a CSV file.
-
-![APISpy Portal Sweep terminal demo](../../demos/apispy-portal-sweep-terminal.gif)
 
 ---
 
@@ -66,7 +64,7 @@ python3 -m playwright install chromium
 
 ```bash
 # From the repository root (or any directory):
-python3 scripts/portal_sweep.py
+python3 scripts/azure_portal_sweep.py
 ```
 
 ### Options
@@ -82,16 +80,16 @@ python3 scripts/portal_sweep.py
 
 ```bash
 # Standard sweep, CSV saved to current directory
-python3 scripts/portal_sweep.py
+python3 scripts/azure_portal_sweep.py
 
 # Slower connection — increase dwell to 3 s
-python3 scripts/portal_sweep.py --dwell-ms 3000
+python3 scripts/azure_portal_sweep.py --dwell-ms 3000
 
 # Record browser video + auto-create GIF (requires ffmpeg)
-python3 scripts/portal_sweep.py --record-video --output-dir ./results
+python3 scripts/azure_portal_sweep.py --record-video --output-dir ./results
 
 # Use a shared session directory (avoids re-logging in)
-python3 scripts/portal_sweep.py --user-data-dir /mnt/shared/apispy-session
+python3 scripts/azure_portal_sweep.py --user-data-dir /mnt/shared/apispy-session
 ```
 
 ---

@@ -550,3 +550,138 @@ main {
   font-style: normal;
   user-select: none;
 }
+
+/* ── Pack settings dialog ───────────────────────────── */
+.pack-dialog {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+  z-index: 200;
+  width: min(480px, 90vw);
+  max-height: 80vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.pack-dialog.hidden { display: none; }
+
+.pack-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.pack-dialog-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+.pack-dialog-close {
+  background: none;
+  border: none;
+  color: var(--text-dim);
+  font-size: 16px;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: var(--radius);
+}
+.pack-dialog-close:hover { background: var(--bg); color: var(--text); }
+
+.pack-dialog-hint {
+  font-size: 11px;
+  color: var(--text-dim);
+  padding: 8px 14px 4px;
+  flex-shrink: 0;
+}
+
+.pack-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 0;
+}
+
+.pack-item {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto auto;
+  gap: 2px 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  cursor: pointer;
+}
+.pack-item:last-child { border-bottom: none; }
+.pack-item:hover { background: var(--bg-row-odd); }
+
+.pack-item-checkbox {
+  grid-row: 1 / 4;
+  grid-column: 1;
+  align-self: center;
+  accent-color: var(--accent);
+  width: 15px;
+  height: 15px;
+  cursor: pointer;
+}
+
+.pack-item-name {
+  grid-row: 1;
+  grid-column: 2;
+  font-weight: 600;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.pack-item-meta {
+  grid-row: 2;
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+}
+
+.pack-item-desc {
+  grid-row: 3;
+  grid-column: 2;
+  font-size: 11px;
+  color: var(--text-dim);
+  font-style: italic;
+}
+
+.pack-dialog-footer {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 10px 14px;
+  border-top: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.pack-apply-btn {
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.pack-apply-btn:hover { opacity: 0.85; }
+
+.pack-cancel-btn {
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 5px 14px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.pack-cancel-btn:hover { background: var(--bg-row-odd); }

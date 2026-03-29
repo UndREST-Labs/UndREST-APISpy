@@ -21,10 +21,10 @@ Prerequisites
 Usage
 -----
     # From the repository root:
-    python apispy/scripts/portal_sweep.py
+    python scripts/azure_portal_sweep.py
 
     # With options:
-    python apispy/scripts/portal_sweep.py \\
+    python scripts/azure_portal_sweep.py \\
         --output-dir ./results \\
         --dwell-ms 3000 \\
         --user-data-dir ~/.apispy-sweep-session

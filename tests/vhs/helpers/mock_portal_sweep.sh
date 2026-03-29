@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Mock script that simulates portal_sweep.py terminal output for VHS recording.
+# Mock script that simulates azure_portal_sweep.py terminal output for VHS recording.
 # Echoes a realistic run of a 305-service sweep with plausible timing delays.
 # This is NOT a real sweep — it produces no actual network traffic or CSV output.
 

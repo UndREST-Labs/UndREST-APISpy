@@ -392,6 +392,20 @@ def _generate(port: int) -> None:
         page.screenshot(path=out)
         print(f"  \u2713 {out}")
 
+        # ── Screenshot 5: Packs dialog open ────────────────────────────────
+        # Deselect any row so the table is clean, then open the Packs dialog.
+        page.keyboard.press("Escape")
+        page.wait_for_timeout(200)
+
+        packs_btn = page.query_selector("#btn-packs")
+        if packs_btn:
+            packs_btn.click()
+            page.wait_for_timeout(400)
+
+        out = str(DEMOS_DIR / "apispy-packs.png")
+        page.screenshot(path=out)
+        print(f"  \u2713 {out}")
+
         browser.close()
 
 

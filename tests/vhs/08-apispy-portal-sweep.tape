@@ -1,4 +1,4 @@
-# VHS tape: demonstrate portal_sweep.py terminal output
+# VHS tape: demonstrate azure_portal_sweep.py terminal output
 # Produces demos/apispy-portal-sweep-terminal.gif
 #
 # This tape shows the script's --help output and simulates a complete sweep
@@ -21,7 +21,7 @@ Enter 1
 Show
 
 # Show help output
-Type "python3 apispy/scripts/portal_sweep.py --help"
+Type "python3 scripts/azure_portal_sweep.py --help"
 Enter 1
 Sleep 3s
 

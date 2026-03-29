@@ -11,9 +11,10 @@ For **SpeQL** (query engine, CodeQL queries, inventory export pipeline), see [Un
 1. **Improve the extension** — UI, matching logic, filter behaviour
 2. **Improve the portal sweep** — coverage, reliability, output format
 3. **Improve shard preparation** — `prepare_data.py` pipeline
-4. **Add or improve JavaScript tests** — filters, matcher, normalizer
-5. **Improve documentation**
-6. **Report bugs or suggest features**
+4. **Add a new API pack** — bundle shards for a new API platform (see [docs/ADDING_A_PACK.md](docs/ADDING_A_PACK.md))
+5. **Add or improve JavaScript tests** — filters, matcher, normalizer, loader
+6. **Improve documentation**
+7. **Report bugs or suggest features**
 
 ## 🔧 Development Setup
 
@@ -49,13 +50,20 @@ extension/
 ├── devtools.html/js    # DevTools panel entry point
 ├── panel.html/css/js   # Main panel UI and logic
 ├── lib/
-│   ├── filters.js      # Request filtering logic
+│   ├── filters.js      # Request filtering logic (host/path scope rules)
 │   ├── matcher.js      # Matches requests against shard inventory
-│   ├── normalizer.js   # Normalises API paths for matching
-│   └── loader.js       # Loads shard data from extension/data/
+│   ├── normalizer.js   # Normalises API paths for matching; supports pack normaliser hooks
+│   └── loader.js       # Loads shard data from extension/data/; pack-aware
 └── data/
-    └── shards/         # Per-provider API inventory (auto-updated from SpecQL)
+    ├── manifest.json   # Pack manifest (schema 2.0.0) — lists all packs and their shards
+    └── shards/         # Per-provider API inventory (flat for azure pack; <pack-id>/ subdirs for others)
 ```
+
+### Pack architecture
+
+A **pack** is a named set of shards from one API platform.  The manifest groups shards by pack so multiple platforms can coexist.  The loader reads the manifest and uses the user's pack selection (stored in browser localStorage) to filter which shards are available for matching.
+
+To add a new API pack see **[docs/ADDING_A_PACK.md](docs/ADDING_A_PACK.md)**.
 
 ### JavaScript Code Style
 
@@ -71,6 +79,7 @@ extension/
 ```bash
 # Run all extension tests (Node.js required)
 node tests/test_filters.js
+node tests/test_loader.js
 node tests/test_matcher.js
 node tests/test_normalizer.js
 ```
@@ -101,10 +110,19 @@ gh release download shards-latest \
   --pattern "api-index-sharded-*.zip" \
   --dir inventory/
 
-# Prepare the shard data
+# Prepare the shard data (azure pack, default settings)
 python3 scripts/prepare_data.py \
   --source-dir inventory/ \
   --out extension/data/
+
+# To add a second pack and merge into the existing manifest:
+python3 scripts/prepare_data.py \
+  --source-dir /path/to/other-pack/ \
+  --out extension/data/ \
+  --pack-id   "my-api-pack" \
+  --pack-name "My API Pack" \
+  --platform  "other" \
+  --merge
 ```
 
 ## 🔄 Pull Request Process

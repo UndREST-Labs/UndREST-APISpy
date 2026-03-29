@@ -31,35 +31,53 @@ apispy/
 │   ├── devtools.html   ← DevTools page entry point (loads lib scripts for sweep processing)
 │   ├── devtools.js     ← Registers the APISpy panel; full ARM processing during sweep mode
 │   ├── panel.html      ← Panel UI markup
-│   ├── panel.js        ← Panel logic: observation, rendering, filtering, standalone restore
+│   ├── panel.js        ← Panel logic: observation, rendering, filtering, pack selection, standalone restore
 │   ├── panel.css       ← Panel styles
 │   ├── lib/
 │   │   ├── filters.js      ← In-scope heuristics (host/URL based)
-│   │   ├── normalizer.js   ← Extracts & normalises request fields
-│   │   ├── loader.js       ← Lazy-loads provider shards from bundled data
+│   │   ├── normalizer.js   ← Extracts & normalises request fields; supports pack normaliser hooks
+│   │   ├── loader.js       ← Pack-aware shard loader (v1.0.0/v2.0.0 manifest, user pack selection)
 │   │   └── matcher.js      ← Classifies requests against the index
 │   ├── data/
-│   │   ├── manifest.json   ← Lists bundled shards + source metadata
+│   │   ├── manifest.json   ← Pack manifest (schema 2.0.0): lists packs + their shards + source metadata
 │   │   └── shards/         ← Per-provider minified JSON shard files
+│   │       │               ← Azure pack shards are in the flat root (backward compat)
+│   │       └── <pack-id>/  ← Shards for additional packs go in a subdirectory named after the pack ID
 │   └── icons/
 │       ├── icon16.png
 │       ├── icon48.png
 │       └── icon128.png
 ├── scripts/
-│   ├── portal_sweep.py     ← Automated portal sweep (device code auth + Playwright)
-│   ├── prepare_data.py     ← Extracts shards from the SpeQL zip export
+│   ├── azure_portal_sweep.py ← Automated Azure Portal sweep (device code auth + Playwright)
+│   ├── prepare_data.py     ← Extracts shards from any SpecQL-compatible zip/dir; pack-aware
 │   └── generate_screenshots.py  ← Generates demos/ screenshots of the extension
-└── tests/
-    ├── test_filters.js
-    ├── test_normalizer.js
-    └── test_matcher.js
+├── tests/
+│   ├── test_filters.js
+│   ├── test_loader.js
+│   ├── test_normalizer.js
+│   └── test_matcher.js
+└── docs/
+    └── ADDING_A_PACK.md    ← Step-by-step guide for adding a new API pack
 ```
+
+### Pack concept
+
+A **pack** is a named set of shards that describes one API platform's surface
+(e.g. Azure REST API Specs, a hypothetical AWS pack, an internal API pack).
+
+The manifest (`extension/data/manifest.json`, schema 2.0.0) groups shards by
+pack.  Each pack entry carries its own metadata (source repo, commit, timestamp)
+and a list of shards.  The loader reads only the shards for the user's enabled
+packs, so multiple platforms can coexist without increasing startup cost for
+platforms the user doesn't need.
+
+To add a new pack, see **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)**.
 
 ---
 
-## Automated Portal Sweep
+## Automated Azure Portal Sweep
 
-`scripts/portal_sweep.py` automates a full Azure Portal sweep using
+`scripts/azure_portal_sweep.py` automates a full Azure Portal sweep using
 Playwright and the APISpy extension.  It authenticates via Azure device code
 flow, visits every service on the **All Services** page, and exports all captured
 ARM API calls as a CSV file.
@@ -77,10 +95,10 @@ pip install -r requirements.txt
 python3 -m playwright install chromium
 
 # Run the sweep (from the repository root)
-python3 scripts/portal_sweep.py
+python3 scripts/azure_portal_sweep.py
 
 # With browser video recording
-python3 scripts/portal_sweep.py --record-video --output-dir ./results
+python3 scripts/azure_portal_sweep.py --record-video --output-dir ./results
 ```
 
 **How sweep mode works:**
@@ -105,14 +123,14 @@ at `scripts/generate_screenshots.py` (headless Chromium, 1280×720).
 
 ### Empty state — waiting for requests
 
-![APISpy empty state](../../demos/apispy-empty.png)
+![APISpy empty state](../demos/apispy-empty.png)
 
 ### Requests table — mixed classification results
 
 The table shows observed requests spanning all five status types, including
 an ARM batch sub-request (↳ row).
 
-![APISpy requests table](../../demos/apispy-requests.png)
+![APISpy requests table](../demos/apispy-requests.png)
 
 ### Detail panel — selected row breakdown
 
@@ -120,7 +138,7 @@ Clicking any row opens the detail panel, which shows the full classification
 breakdown: matched route key, available spec versions, provider namespace, and
 reason code.
 
-![APISpy detail panel](../../demos/apispy-detail.png)
+![APISpy detail panel](../demos/apispy-detail.png)
 
 To regenerate these screenshots after making changes to the extension:
 
@@ -153,6 +171,14 @@ python3 scripts/generate_screenshots.py
 
 The toolbar contains multi-select filter pills: **All** · **✅ Exact** · **⚠️ Version** · **🔶 Route** · **❌ No match** · **ℹ️ ARM root**.  
 Each pill can be toggled independently to show only the desired classification(s).  Clicking **All** resets all filters.
+
+### Pack selection
+
+The **Packs** button in the toolbar opens the pack settings dialog.  It lists every bundled API pack with its platform, provider count, and export date.  Enable or disable individual packs using the checkboxes, then click **Apply & Clear Results** to save the selection — the loader cache is reset and a fresh sweep begins against the chosen packs.  Your selection is persisted in browser storage across DevTools reloads.
+
+![APISpy pack selection dialog](../demos/apispy-packs.png)
+
+See **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)** to learn how to bundle shards for a new API platform.
 
 ### ARM batch inspection
 
@@ -213,33 +239,40 @@ All 302 available provider shards are bundled; there is no size cap.
 
 ### Re-bundling shards
 
-To re-populate from a fresh SpeQL export:
+To re-populate from a fresh SpeQL export (Azure pack):
 
 ```bash
 # From the repository root — requires the sharded zip in inventory/
 python3 scripts/prepare_data.py --zip inventory/api-index-sharded-<run-id>.zip
 ```
 
-To cap shard size (e.g. exclude shards larger than 100 KB):
+To add or refresh a different pack without overwriting the Azure pack:
 
 ```bash
-python3 scripts/prepare_data.py --zip inventory/api-index-sharded-<run-id>.zip --size-limit 100
+python3 scripts/prepare_data.py \
+  --source-dir /path/to/other-pack/ \
+  --out extension/data/ \
+  --pack-id "my-api-pack" \
+  --pack-name "My API Pack" \
+  --platform "other" \
+  --merge
 ```
 
-After running, reload the unpacked extension in Chrome to pick up the new data.
+See **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)** for the full guide.
 
 ---
 
 ## Running the tests
 
-The unit tests for `filters`, `normalizer`, and `matcher` run in Node.js (no
+The unit tests for `filters`, `normalizer`, `loader`, and `matcher` run in Node.js (no
 additional packages required).
 
 ```bash
 # From the repository root
-node apispy/tests/test_filters.js
-node apispy/tests/test_normalizer.js
-node apispy/tests/test_matcher.js
+node tests/test_filters.js
+node tests/test_loader.js
+node tests/test_normalizer.js
+node tests/test_matcher.js
 ```
 
 ---

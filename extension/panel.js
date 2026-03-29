@@ -66,6 +66,7 @@ const requestCount   = document.getElementById("request-count");
 const filterGroup    = document.getElementById("filter-group");
 const btnClear       = document.getElementById("btn-clear");
 const btnAutoscroll  = document.getElementById("btn-autoscroll");
+const btnPacks       = document.getElementById("btn-packs");
 const btnCopyAll     = document.getElementById("btn-copy-all");
 const btnCsv         = document.getElementById("btn-csv");
 const emptyState     = document.getElementById("empty-state");
@@ -79,6 +80,11 @@ const detailHeading  = document.getElementById("detail-heading");
 const colFilterDropdown  = document.getElementById("col-filter-dropdown");
 const colFilterSelectAll = document.getElementById("col-filter-select-all");
 const colFilterList      = document.getElementById("col-filter-list");
+const packDialog         = document.getElementById("pack-dialog");
+const packList           = document.getElementById("pack-list");
+const packDialogClose    = document.getElementById("pack-dialog-close");
+const packApply          = document.getElementById("pack-apply");
+const packCancel         = document.getElementById("pack-cancel");
 
 // ── Initialisation ────────────────────────────────────────────────────────────
 
@@ -86,10 +92,18 @@ async function init() {
   setStatus("Loading index...");
 
   try {
-    const meta = await Loader.getSourceMetadata();
+    const packs     = await Loader.listBundledPacks();
     const providers = await Loader.listBundledProviders();
-    const stamp = meta.generated_at ? new Date(meta.generated_at).toLocaleDateString() : "unknown";
-    setStatus(providers.length + " providers bundled (export " + stamp + ")");
+    // Build a status line that mentions pack counts when multiple packs exist.
+    if (packs.length === 1) {
+      const meta  = packs[0].source_metadata || {};
+      const stamp = meta.generated_at ? new Date(meta.generated_at).toLocaleDateString() : "unknown";
+      setStatus(providers.length + " providers bundled (export " + stamp + ")");
+    } else {
+      const enabledIds = Loader.getEnabledPackIds();
+      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
+      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
+    }
   } catch (err) {
     setStatus("Failed to load data manifest: " + err.message);
   }
@@ -869,6 +883,113 @@ function attachDetailResizer() {
   });
 }
 
+// ── Pack settings dialog ──────────────────────────────────────────────────────
+
+/** Temporary selection while the dialog is open. */
+let _packDialogSelection = null;
+
+/**
+ * Open the pack settings dialog and populate it with the bundled packs.
+ */
+async function openPackDialog() {
+  let packs;
+  try {
+    packs = await Loader.listBundledPacks();
+  } catch (err) {
+    flashStatus("Failed to load pack list: " + err.message, 4000);
+    return;
+  }
+
+  const enabledIds = Loader.getEnabledPackIds();
+  // Build a working copy of the enabled set so we can revert on Cancel.
+  _packDialogSelection = enabledIds
+    ? new Set(enabledIds)
+    : new Set(packs.map((p) => p.pack_id));
+
+  packList.innerHTML = "";
+  for (const pack of packs) {
+    const checked = _packDialogSelection.has(pack.pack_id);
+    const meta    = pack.source_metadata || {};
+    const stamp   = meta.generated_at
+      ? new Date(meta.generated_at).toLocaleDateString() : "";
+    const metaStr = [
+      pack.platform ? pack.platform.toUpperCase() : "",
+      pack.total_bundled_shards + " providers",
+      stamp ? "exported " + stamp : "",
+    ].filter(Boolean).join(" · ");
+
+    const item = document.createElement("label");
+    item.className = "pack-item";
+    item.innerHTML = `
+      <input type="checkbox" class="pack-item-checkbox" data-pack="${escHtml(pack.pack_id)}"${checked ? " checked" : ""}>
+      <span class="pack-item-name">${escHtml(pack.display_name || pack.pack_id)}</span>
+      <span class="pack-item-meta">${escHtml(metaStr)}</span>
+      <span class="pack-item-desc">${escHtml(pack.description || "")}</span>
+    `;
+    packList.appendChild(item);
+  }
+
+  packDialog.classList.remove("hidden");
+}
+
+function closePackDialog() {
+  packDialog.classList.add("hidden");
+  _packDialogSelection = null;
+}
+
+/**
+ * Apply the pack selection from the dialog: persist to localStorage,
+ * reset the loader cache, clear existing results, and update the status bar.
+ */
+async function applyPackSelection() {
+  if (!_packDialogSelection) { closePackDialog(); return; }
+
+  // Read checkbox state from the rendered list.
+  const checkboxes = packList.querySelectorAll(".pack-item-checkbox[data-pack]");
+  const selected = [];
+  checkboxes.forEach((cb) => {
+    if (cb.checked) selected.push(cb.dataset.pack);
+  });
+
+  // Persist selection; null means "all packs" — only save when it differs
+  // from the full set.
+  let allPacks;
+  try { allPacks = (await Loader.listBundledPacks()).map((p) => p.pack_id); } catch (_) { allPacks = []; }
+  const isAll = allPacks.length > 0 && allPacks.every((id) => selected.includes(id));
+  Loader.setEnabledPackIds(isAll ? null : selected);
+
+  // Reset the shard cache so subsequent requests use the new pack selection.
+  Loader.resetCache();
+
+  // Clear captured requests — they may have been classified against the
+  // previous pack selection, so they could be stale.
+  state.requests = [];
+  state.selectedIdx = null;
+  tbody.innerHTML = "";
+  closeDetail();
+  closeColumnFilter();
+  updateCountBadge();
+  toggleEmptyState();
+  localStorage.removeItem("apispy_requests");
+
+  closePackDialog();
+
+  // Refresh the status bar.
+  try {
+    const packs     = await Loader.listBundledPacks();
+    const providers = await Loader.listBundledProviders();
+    if (packs.length === 1) {
+      const meta  = packs[0].source_metadata || {};
+      const stamp = meta.generated_at ? new Date(meta.generated_at).toLocaleDateString() : "unknown";
+      setStatus(providers.length + " providers bundled (export " + stamp + ")");
+    } else {
+      const enabledIds = Loader.getEnabledPackIds();
+      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
+      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
+    }
+  } catch (_) {}
+}
+
 // ── UI event listeners ────────────────────────────────────────────────────────
 
 function attachUIListeners() {
@@ -904,6 +1025,18 @@ function attachUIListeners() {
   btnAutoscroll.addEventListener("click", () => {
     state.autoscroll = !state.autoscroll;
     btnAutoscroll.classList.toggle("active", state.autoscroll);
+  });
+
+  // Pack settings dialog
+  btnPacks.addEventListener("click", openPackDialog);
+  packDialogClose.addEventListener("click", closePackDialog);
+  packCancel.addEventListener("click", closePackDialog);
+  packApply.addEventListener("click", applyPackSelection);
+  // Close dialog on Escape
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape" && !packDialog.classList.contains("hidden")) {
+      closePackDialog();
+    }
   });
 
   // Copy all visible rows

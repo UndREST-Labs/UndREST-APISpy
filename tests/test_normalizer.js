@@ -345,3 +345,75 @@ console.log("\n=== Normalizer.templateAzureArmPath — single-provider paths unc
 
 console.log(`\nNormalizer: ${pass} passed, ${fail} failed`);
 if (fail > 0) process.exit(1);
+
+console.log("\n=== Normalizer.registerPackNormaliser — custom pack normaliser ===");
+{
+  // Register a minimal custom normaliser for a hypothetical "example.com" pack.
+  let wasCalled = false;
+
+  Normalizer.registerPackNormaliser("example-api", {
+    matchesRequest(host, _path) {
+      return host.endsWith(".example.com") || host === "api.example.com";
+    },
+    normalise(rawUrl, rawMethod) {
+      wasCalled = true;
+      let parsed;
+      try { parsed = new URL(rawUrl); } catch (e) {
+        return { ok: false, error: "invalid_url" };
+      }
+      const method = (rawMethod || "GET").toUpperCase().trim();
+      const host   = parsed.hostname.toLowerCase();
+      const normalisedPath = parsed.pathname.replace(/\/[0-9a-f-]{36}/gi, "/{id}");
+      return {
+        ok: true, method, host,
+        pathname: parsed.pathname,
+        normalisedPath,
+        armPath: normalisedPath,
+        apiVersion: parsed.searchParams.get("api-version") || null,
+        fullUrl: rawUrl,
+      };
+    },
+  });
+
+  // Non-example host: should still use the Azure ARM normaliser.
+  const armResult = Normalizer.normalise(
+    "https://management.azure.com/subscriptions/abc123/resourceGroups/rg?api-version=2023-01-01",
+    "GET"
+  );
+  assert(!wasCalled, "pack normaliser NOT called for Azure ARM host");
+  assert(armResult.ok === true, "Azure ARM host still normalises correctly");
+  assert(armResult.armPath.includes("{subscriptionId}"), "Azure ARM path still templated");
+
+  // Example host: should be handled by the custom normaliser.
+  wasCalled = false;
+  const exResult = Normalizer.normalise(
+    "https://api.example.com/resources/550e8400-e29b-41d4-a716-446655440000?api-version=2024-01-01",
+    "GET"
+  );
+  assert(wasCalled === true, "custom pack normaliser called for api.example.com");
+  assert(exResult.ok === true, "custom normaliser returns ok=true");
+  assert(exResult.host === "api.example.com", "custom normaliser returns correct host");
+  assert(exResult.normalisedPath.includes("{id}"), "custom normaliser applies its own path substitution");
+  assert(exResult.apiVersion === "2024-01-01", "custom normaliser extracts api-version");
+
+  // Subdomain should also match.
+  wasCalled = false;
+  const subResult = Normalizer.normalise("https://sub.example.com/v1/things", "POST");
+  assert(wasCalled === true, "custom pack normaliser called for subdomain.example.com");
+  assert(subResult.method === "POST", "method preserved by custom normaliser");
+}
+
+console.log("\n=== Normalizer.registerPackNormaliser — validation ===");
+{
+  let threw = false;
+  try {
+    Normalizer.registerPackNormaliser("bad-pack", { matchesRequest: () => true });
+  } catch (e) {
+    threw = true;
+    assert(e instanceof TypeError, "missing normalise() throws TypeError");
+  }
+  assert(threw, "registerPackNormaliser throws for invalid normaliser object");
+}
+
+console.log(`\nNormalizer: ${pass} passed, ${fail} failed`);
+if (fail > 0) process.exit(1);
