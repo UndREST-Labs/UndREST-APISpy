@@ -48,7 +48,7 @@ apispy/
 │       ├── icon48.png
 │       └── icon128.png
 ├── scripts/
-│   ├── portal_sweep.py     ← Automated portal sweep (device code auth + Playwright)
+│   ├── azure_portal_sweep.py ← Automated Azure Portal sweep (device code auth + Playwright)
 │   ├── prepare_data.py     ← Extracts shards from any SpecQL-compatible zip/dir; pack-aware
 │   └── generate_screenshots.py  ← Generates demos/ screenshots of the extension
 ├── tests/
@@ -75,9 +75,9 @@ To add a new pack, see **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)**.
 
 ---
 
-## Automated Portal Sweep
+## Automated Azure Portal Sweep
 
-`scripts/portal_sweep.py` automates a full Azure Portal sweep using
+`scripts/azure_portal_sweep.py` automates a full Azure Portal sweep using
 Playwright and the APISpy extension.  It authenticates via Azure device code
 flow, visits every service on the **All Services** page, and exports all captured
 ARM API calls as a CSV file.
@@ -95,10 +95,10 @@ pip install -r requirements.txt
 python3 -m playwright install chromium
 
 # Run the sweep (from the repository root)
-python3 scripts/portal_sweep.py
+python3 scripts/azure_portal_sweep.py
 
 # With browser video recording
-python3 scripts/portal_sweep.py --record-video --output-dir ./results
+python3 scripts/azure_portal_sweep.py --record-video --output-dir ./results
 ```
 
 **How sweep mode works:**
@@ -123,14 +123,14 @@ at `scripts/generate_screenshots.py` (headless Chromium, 1280×720).
 
 ### Empty state — waiting for requests
 
-![APISpy empty state](../../demos/apispy-empty.png)
+![APISpy empty state](../demos/apispy-empty.png)
 
 ### Requests table — mixed classification results
 
 The table shows observed requests spanning all five status types, including
 an ARM batch sub-request (↳ row).
 
-![APISpy requests table](../../demos/apispy-requests.png)
+![APISpy requests table](../demos/apispy-requests.png)
 
 ### Detail panel — selected row breakdown
 
@@ -138,7 +138,7 @@ Clicking any row opens the detail panel, which shows the full classification
 breakdown: matched route key, available spec versions, provider namespace, and
 reason code.
 
-![APISpy detail panel](../../demos/apispy-detail.png)
+![APISpy detail panel](../demos/apispy-detail.png)
 
 To regenerate these screenshots after making changes to the extension:
 
@@ -171,6 +171,12 @@ python3 scripts/generate_screenshots.py
 
 The toolbar contains multi-select filter pills: **All** · **✅ Exact** · **⚠️ Version** · **🔶 Route** · **❌ No match** · **ℹ️ ARM root**.  
 Each pill can be toggled independently to show only the desired classification(s).  Clicking **All** resets all filters.
+
+### Pack selection
+
+The **Packs** button in the toolbar opens the pack settings dialog.  It lists every bundled API pack with its platform, provider count, and export date.  Enable or disable individual packs using the checkboxes, then click **Apply & Clear Results** to save the selection — the loader cache is reset and a fresh sweep begins against the chosen packs.  Your selection is persisted in browser storage across DevTools reloads.
+
+See **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)** to learn how to bundle shards for a new API platform.
 
 ### ARM batch inspection
 

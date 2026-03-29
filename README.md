@@ -14,7 +14,7 @@ The extension ships with pre-bundled provider shards (updated nightly from [UndR
 - [Installation](#installation)
 - [Usage](#usage)
 - [API Packs](#api-packs)
-- [Portal Sweep](#portal-sweep)
+- [Azure Portal Sweep](#azure-portal-sweep)
 - [Shard Data](#shard-data)
 - [Repository Structure](#repository-structure)
 - [Ecosystem](#ecosystem)
@@ -45,9 +45,9 @@ The extension installs with all provider shards pre-bundled in `extension/data/s
 
 See [extension/README.md](extension/README.md) for full usage details, panel walkthrough, and configuration options.
 
-### Portal Sweep Script
+### Azure Portal Sweep Script
 
-The portal sweep automation requires Python 3.8+:
+The Azure Portal sweep automation requires Python 3.8+:
 
 ```bash
 pip3 install -r requirements.txt
@@ -70,7 +70,9 @@ Use the filter controls to narrow by provider, status, or path pattern. Export t
 
 ### Demo
 
-![APISpy Portal Sweep Demo](demos/08-apispy-portal-sweep.gif)
+![APISpy panel with classified requests](demos/apispy-requests.png)
+
+*The panel classifying live ARM requests — showing exact matches, version mismatches, and unknown routes across provider namespaces.*
 
 ## API Packs
 
@@ -95,12 +97,12 @@ The high-level steps are:
 4. Extend `lib/filters.js` with the new platform's hosts/suffixes
 5. Add a GitHub Actions workflow to keep the new pack up-to-date automatically
 
-## Portal Sweep
+## Azure Portal Sweep
 
-`scripts/portal_sweep.py` is an automation script that walks every service on the Azure Portal **All Services** page with the APISpy extension running, then exports all captured ARM API calls as a CSV — providing broad, automated coverage of real-world Azure API traffic across all services.
+`scripts/azure_portal_sweep.py` is an automation script that walks every service on the **Azure Portal All Services** page with the APISpy extension running, then exports all captured ARM API calls as a CSV — providing broad, automated coverage of real-world Azure API traffic across all services.
 
 ```bash
-python3 scripts/portal_sweep.py
+python3 scripts/azure_portal_sweep.py
 ```
 
 **Options:**
@@ -163,7 +165,7 @@ UndREST-APISpy/
 │   └── README.md
 ├── scripts/
 │   ├── prepare_data.py          # Converts SpecQL export zip/dir into extension/data/shards/
-│   ├── portal_sweep.py          # Playwright sweep of Azure Portal → CSV of ARM calls
+│   ├── azure_portal_sweep.py    # Playwright sweep of Azure Portal → CSV of ARM calls
 │   ├── generate_screenshots.py  # Demo screenshot generation
 │   └── PORTAL_SWEEP.md
 ├── tests/
@@ -176,7 +178,6 @@ UndREST-APISpy/
 │       └── helpers/
 │           └── mock_portal_sweep.sh
 ├── demos/
-│   ├── 08-apispy-portal-sweep.gif
 │   └── apispy-*.png
 └── .github/
     └── workflows/

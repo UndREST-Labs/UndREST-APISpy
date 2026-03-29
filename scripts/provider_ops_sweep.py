@@ -4,7 +4,7 @@
 Workflow
 --------
 1. Authenticate to Azure via device code flow (same Azure CLI first-party app
-   as portal_sweep.py — client ID 04b07795-…).
+   as azure_portal_sweep.py — client ID 04b07795-…).
 2. List all subscriptions accessible to the authenticated identity.
 3. List all registered resource providers in each subscription, deduplicating
    by namespace so each provider is queried only once.
@@ -655,7 +655,7 @@ _SUFFIX_BASE_SCORES: dict[str, int] = {
 
 
 def authenticate_device_code() -> object:
-    """Authenticate via device code flow (same logic as portal_sweep.py).
+    """Authenticate via device code flow (same logic as azure_portal_sweep.py).
 
     Returns a ``DeviceCodeCredential`` that can be passed to ``get_token()``
     to obtain (and auto-refresh) bearer tokens for the Management API.
