@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 import urllib.error
@@ -718,6 +719,69 @@ def _paginate(url: str, credential: object) -> list[dict]:
 
 # ── Enumeration helpers ───────────────────────────────────────────────────────
 
+# Regex to extract the list of supported API versions from an ARM error body.
+# ARM error messages follow the pattern (with single or double quotes):
+#   "The supported api-versions are '2014-02-26,2014-04-01-preview'."
+_SUPPORTED_VERSIONS_RE = re.compile(
+    r"supported api-versions are ['\"]([^'\"]+)['\"]",
+    re.IGNORECASE,
+)
+
+
+def _parse_supported_versions_from_error(error_body: str) -> list[str]:
+    """Extract supported API versions from an ARM ``InvalidResourceType`` error body.
+
+    ARM includes the list of accepted versions in the error message text when
+    the requested version is unsupported, for example::
+
+        "The resource type 'operations' could not be found in the namespace
+        'microsoft.visualstudio' for api version '2021-04-01'.
+        The supported api-versions are '2014-02-26,2014-04-01-preview'."
+
+    Returns a list of version strings sorted newest-first, or an empty list
+    if the pattern is not present in the error body.
+    """
+    m = _SUPPORTED_VERSIONS_RE.search(error_body)
+    if not m:
+        return []
+    # Versions are comma-separated inside the quotes.
+    versions = [v.strip() for v in m.group(1).split(",") if v.strip()]
+    # Lexicographic reverse-sort produces newest-first for YYYY-MM-DD dates
+    # and correctly places GA versions before preview variants of the same date.
+    return sorted(versions, reverse=True)
+
+
+def _collect_provider_api_hints(providers: list[dict]) -> dict[str, list[str]]:
+    """Extract per-namespace API version hints from provider registration data.
+
+    When the providers endpoint is called with ``$expand=resourceTypes``, each
+    provider entry includes a ``resourceTypes`` array.  Each resource type has
+    an ``apiVersions`` list.  While these versions apply to individual resource
+    type CRUD calls (not directly to the ``/operations`` endpoint), ARM often
+    accepts the same or an overlapping version range for both, making them
+    useful fallbacks when the default ``OPERATIONS_API_VERSION`` is rejected.
+
+    Returns a mapping of namespace (lowercased for case-insensitive lookup)
+    → sorted list of API versions (newest-first, deduplicated across all
+    resource types for that namespace).
+    """
+    hints: dict[str, list[str]] = {}
+    for prov in providers:
+        ns = prov.get("namespace", "").strip()
+        if not ns:
+            continue
+        ns_key = ns.lower()  # normalise for case-insensitive lookup in sweep()
+        versions: set[str] = set()
+        for rt in prov.get("resourceTypes", []):
+            for v in rt.get("apiVersions", []):
+                if v and v.strip():
+                    versions.add(v.strip())
+        if versions:
+            existing = set(hints.get(ns_key, []))
+            existing.update(versions)
+            hints[ns_key] = sorted(existing, reverse=True)
+    return hints
+
 
 def list_subscriptions(credential: object) -> list[dict]:
     """Return all subscriptions accessible to the authenticated identity."""
@@ -739,24 +803,82 @@ def list_providers_for_subscription(
     return _paginate(url, credential)
 
 
-def list_provider_operations(credential: object, namespace: str) -> list[dict]:
+def list_provider_operations(
+    credential: object,
+    namespace: str,
+    api_version_hints: list[str] | None = None,
+) -> list[dict]:
     """Return all operations defined by a resource provider namespace.
 
-    Returns an empty list (with a warning) if the endpoint is unreachable or
-    returns an error, so that one bad provider does not abort the sweep.
+    Tries ``OPERATIONS_API_VERSION`` first.  When ARM returns a 404 with an
+    ``InvalidResourceType`` error — which happens when a provider's operations
+    endpoint does not recognise the requested API version — the function
+    automatically extracts the list of supported versions from the error body
+    and retries with the newest one.  Any additional versions supplied via
+    ``api_version_hints`` (typically derived from the provider's registered
+    resource-type versions) are also tried as fallbacks in newest-first order.
+
+    Returns an empty list (with a warning) if all attempts fail, so that one
+    bad provider does not abort the sweep.
     """
-    url = (
-        f"{MANAGEMENT_BASE}/providers/{namespace}/operations"
-        f"?api-version={OPERATIONS_API_VERSION}"
-    )
-    try:
-        return _paginate(url, credential)
-    except Exception as exc:
-        print(
-            f"  WARNING: Could not fetch operations for {namespace}: {exc}",
-            file=sys.stderr,
+    # Build an ordered, deduplicated list of API versions to try.
+    # ``OPERATIONS_API_VERSION`` is always first; hints follow newest-first.
+    seen_versions: set[str] = set()
+    candidates: list[str] = []
+
+    def _add_candidate(v: str) -> None:
+        """Append v to candidates only if not already queued."""
+        if v and v not in seen_versions:
+            seen_versions.add(v)
+            candidates.append(v)
+
+    _add_candidate(OPERATIONS_API_VERSION)
+    for v in (api_version_hints or []):
+        _add_candidate(v)
+
+    last_error: str = ""
+    extracted_from_error: bool = False  # only parse error body once per namespace
+
+    # Iterate over candidates; the list may grow during iteration when
+    # supported versions are extracted from an error response.
+    idx = 0
+    while idx < len(candidates):
+        api_version = candidates[idx]
+        idx += 1
+        url = (
+            f"{MANAGEMENT_BASE}/providers/{namespace}/operations"
+            f"?api-version={api_version}"
         )
-        return []
+        try:
+            return _paginate(url, credential)
+        except Exception as exc:
+            error_str = str(exc)
+            last_error = error_str
+
+            # When ARM reports InvalidResourceType it includes the list of
+            # supported versions in the error body — parse and enqueue them
+            # (but only once, to avoid duplicating work on subsequent retries).
+            # Note: _arm_get wraps urllib.error.HTTPError into RuntimeError, so
+            # the error body (including the error code and supported versions)
+            # is always present in str(exc).
+            if not extracted_from_error and "InvalidResourceType" in error_str:
+                extracted_from_error = True
+                extracted = _parse_supported_versions_from_error(error_str)
+                added = [v for v in extracted if v not in seen_versions]
+                for v in added:
+                    _add_candidate(v)
+                if added:
+                    print(
+                        f"    → retrying {namespace} with versions from error: "
+                        f"{added[:3]}{'…' if len(added) > 3 else ''}",
+                        file=sys.stderr,
+                    )
+
+    print(
+        f"  WARNING: Could not fetch operations for {namespace}: {last_error}",
+        file=sys.stderr,
+    )
+    return []
 
 
 # ── Classification pipeline ───────────────────────────────────────────────────
@@ -1323,6 +1445,7 @@ def sweep(
     print("Enumerating providers across subscriptions…", file=sys.stderr)
     seen_namespaces: set[str]  = set()
     all_namespaces:  list[str] = []
+    all_provider_data: list[dict] = []  # accumulate all provider objects for hint extraction
 
     for sub in subscriptions:
         sub_id   = sub["subscriptionId"]
@@ -1336,6 +1459,7 @@ def sweep(
                 file=sys.stderr,
             )
             continue
+        all_provider_data.extend(providers)
         for prov in providers:
             ns = prov.get("namespace", "").strip()
             if ns and ns not in seen_namespaces:
@@ -1348,6 +1472,12 @@ def sweep(
         file=sys.stderr,
     )
 
+    # Build a per-namespace map of API version hints extracted from the
+    # resourceTypes registration data.  These are used as fallbacks when the
+    # default OPERATIONS_API_VERSION is rejected by a provider's operations
+    # endpoint.  The map key preserves original casing from ARM.
+    ns_api_hints = _collect_provider_api_hints(all_provider_data)
+
     # ── Step 3: enumerate and classify operations per provider ────────────────
     print("Enumerating provider operations…", file=sys.stderr)
     detail_records:  list[dict] = []
@@ -1356,7 +1486,11 @@ def sweep(
 
     for idx, ns in enumerate(all_namespaces, start=1):
         print(f"  [{idx}/{total}] {ns}", file=sys.stderr)
-        raw_ops    = list_provider_operations(credential, ns)
+        # Pass the API version hints collected from the provider's registered
+        # resource types as fallbacks; they are tried only if the default
+        # OPERATIONS_API_VERSION is rejected.
+        hints = ns_api_hints.get(ns.lower(), [])
+        raw_ops    = list_provider_operations(credential, ns, api_version_hints=hints)
         parsed_ops = [
             record
             for op in raw_ops
