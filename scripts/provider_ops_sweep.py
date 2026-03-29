@@ -1202,28 +1202,178 @@ def _merge_tags(*tag_sequences: tuple | list) -> list[str]:
     return sorted(merged)
 
 
-def _derive_is_control_plane_bridge(
-    action_segment_lower: str,
-    risk_tags: list[str],
-) -> bool:
-    """Return True when the operation acts as a control-plane-to-data-plane bridge.
+def compute_primary_risk_class(risk_tags: list[str]) -> str:
+    """Derive a single primary risk classification label from accumulated risk tags.
 
-    A bridge operation lets the control plane reach across into the data plane
-    (or a third-party back-end) — the defining UndREST risk concept.
+    Priority order (first match wins):
 
-    Detection heuristics (any one is sufficient):
-    - The action segment contains an explicit invocation keyword.
-    - The accumulated risk tags already contain 'control-plane-to-data-plane'.
+    1. remote-execution / control-plane-to-data-plane → "Execution"
+    2. credential-proxy / identity-impersonation       → "Identity"
+    3. secret-extraction / key-extraction              → "SecretAccess"
+    4. data-exfiltration                               → "DataExfiltration"
+    5. privilege-escalation                            → "PrivilegeEscalation"
+    6. trust-boundary-crossing                         → "TrustBoundary"
+    7. exposure-change                                 → "ExposureChange"
+    8. fallback                                        → "Other"
     """
-    # Keywords that indicate direct data-plane invocation from the control plane.
-    _BRIDGE_KEYWORDS = (
-        "invoke", "dynamicinvoke", "execute", "runcommand",
-        "script", "command", "connections", "pipeline",
-    )
-    return (
-        any(kw in action_segment_lower for kw in _BRIDGE_KEYWORDS)
-        or "control-plane-to-data-plane" in risk_tags
-    )
+    tag_set = set(risk_tags)
+    if tag_set & {"remote-execution", "control-plane-to-data-plane"}:
+        return "Execution"
+    if tag_set & {"credential-proxy", "identity-impersonation"}:
+        return "Identity"
+    if tag_set & {"secret-extraction", "key-extraction"}:
+        return "SecretAccess"
+    if "data-exfiltration" in tag_set:
+        return "DataExfiltration"
+    if "privilege-escalation" in tag_set:
+        return "PrivilegeEscalation"
+    if "trust-boundary-crossing" in tag_set:
+        return "TrustBoundary"
+    if "exposure-change" in tag_set:
+        return "ExposureChange"
+    return "Other"
+
+
+def detect_control_plane_bridge(op: dict) -> bool:
+    """Detect whether an operation acts as a control-plane-to-data-plane bridge.
+
+    Returns True when ANY of the following tag-combination signals are present:
+
+    1. execution + control-plane-to-data-plane  (both in riskTags)
+    2. credential-proxy + trust-boundary-crossing (both in riskTags)
+    3. secret-access risk + "data" + "execution" edge types all present
+    4. invocation capability + "data" edge type (data-plane interaction)
+
+    Parameters
+    ----------
+    op:
+        A classified operation dict containing at minimum:
+        ``riskTags``, ``edgeTypes``, ``capabilityTags``, ``suffixKind``.
+    """
+    risk_tags       = set(op.get("riskTags", []))
+    edge_types      = set(op.get("edgeTypes", []))
+    capability_tags = set(op.get("capabilityTags", []))
+
+    # 1. execution + control-plane-to-data-plane both present as risk tags
+    if "remote-execution" in risk_tags and "control-plane-to-data-plane" in risk_tags:
+        return True
+
+    # 2. credential-proxy + trust-boundary-crossing both present as risk tags
+    if "credential-proxy" in risk_tags and "trust-boundary-crossing" in risk_tags:
+        return True
+
+    # 3. secret-access risk + data + execution edge types all present
+    has_secret_risk = bool(risk_tags & {"secret-extraction", "key-extraction"})
+    if has_secret_risk and "data" in edge_types and "execution" in edge_types:
+        return True
+
+    # 4. invocation capability + data-plane interaction (data edge type)
+    if "invocation" in capability_tags and "data" in edge_types:
+        return True
+
+    return False
+
+
+# Human-readable title overrides for well-known action names (keyed lowercase).
+_ACTION_TITLE_OVERRIDES: dict[str, str] = {
+    "listkeys":              "List access keys",
+    "listkey":               "List access keys",
+    "listsecrets":           "Retrieve secrets",
+    "listsecret":            "Retrieve secrets",
+    "listconnectionstrings": "List connection strings",
+    "listconnectionstring":  "List connection strings",
+    "runcommand":            "Run command on resource",
+    "regeneratekey":         "Regenerate access key",
+    "regeneratekeys":        "Regenerate access keys",
+    "exporttemplate":        "Export resource template",
+    "getaccesskeys":         "Get access keys",
+    "listcredentials":       "List credentials",
+    "listcredential":        "List credentials",
+    "listpasswords":         "List passwords",
+    "gettoken":              "Get access token",
+    "listtokens":            "List access tokens",
+}
+
+# Why-it-matters explanations keyed by primaryRiskClass.
+_WHY_IT_MATTERS: dict[str, str] = {
+    "Execution":           "Allows execution of commands via control plane",
+    "Identity":            "Exposes or proxies identity credentials",
+    "SecretAccess":        "Exposes sensitive credentials or secrets",
+    "DataExfiltration":    "Enables data movement or exfiltration outside of the resource",
+    "PrivilegeEscalation": "May allow elevation of privileges or role assignment",
+    "TrustBoundary":       "Crosses trust boundary between resources or identities",
+    "ExposureChange":      "Modifies external or network exposure of a resource",
+    "Other":               "May require additional review based on context",
+}
+
+
+def _split_camel_case(s: str) -> str:
+    """Split a camelCase or PascalCase string into a space-separated lowercase phrase."""
+    # Handle acronym boundaries such as "getURL" → "get URL".
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", s)
+    # Handle standard camelCase boundaries such as "listKeys" → "list Keys".
+    s = re.sub(r"([a-z])([A-Z])", r"\1 \2", s)
+    return s.lower()
+
+
+def compute_presentation_fields(op: dict) -> dict[str, str]:
+    """Compute Atlas-ready presentation layer fields for a classified operation.
+
+    Returns a dict with three string fields:
+
+    - ``presentationSeverity`` — a short severity label for UI display.
+    - ``summaryTitle``         — human-readable title derived from the action name.
+    - ``summaryWhyItMatters``  — short explanation of why the operation matters.
+
+    Parameters
+    ----------
+    op:
+        A classified operation dict containing at minimum:
+        ``riskTags``, ``sensitivityTags``, ``isHighRisk``,
+        ``primaryRiskClass``, ``suffixKind``, ``actionName``.
+    """
+    risk_tags        = set(op.get("riskTags", []))
+    sensitivity_tags = set(op.get("sensitivityTags", []))
+    is_high_risk     = op.get("isHighRisk", False)
+    primary_class    = op.get("primaryRiskClass", "Other")
+    suffix_kind      = op.get("suffixKind", "").lower()
+    action_name      = op.get("actionName", "")
+
+    # ── presentationSeverity ──────────────────────────────────────────────────
+    if primary_class == "Execution" and is_high_risk:
+        severity = "critical-execution"
+    elif primary_class == "SecretAccess":
+        severity = "critical-secret-access"
+    elif "trust-boundary-crossing" in risk_tags:
+        severity = "high-trust-change"
+    elif "exposure-change" in risk_tags:
+        severity = "high-exposure-change"
+    elif suffix_kind == "read" and bool(
+        sensitivity_tags & {
+            "secret-material", "key-material",
+            "credential-material", "token-material",
+        }
+    ):
+        severity = "review-sensitive-read"
+    else:
+        severity = "low"
+
+    # ── summaryTitle ──────────────────────────────────────────────────────────
+    title_key = action_name.lower()
+    if title_key in _ACTION_TITLE_OVERRIDES:
+        title = _ACTION_TITLE_OVERRIDES[title_key]
+    else:
+        words = _split_camel_case(action_name)
+        title = (words[0].upper() + words[1:]) if words else action_name
+
+    # ── summaryWhyItMatters ───────────────────────────────────────────────────
+    why = _WHY_IT_MATTERS.get(primary_class, _WHY_IT_MATTERS["Other"])
+
+    return {
+        "presentationSeverity": severity,
+        "summaryTitle":         title,
+        "summaryWhyItMatters":  why,
+    }
 
 
 # Graph edge types for the Azure Atlas model.  Each operation can contribute
@@ -1428,11 +1578,28 @@ def classify_operation(
     candidate_method = _SUFFIX_TO_METHOD.get(suffix_kind.lower(), "POST")
 
     # ── Stage 7: derived semantic fields ─────────────────────────────────────
-    is_control_plane_bridge = _derive_is_control_plane_bridge(
-        action_segment_lower, risk_tags
-    )
-    edge_types = _derive_edge_types(capability_tags, sensitivity_tags, risk_tags)
-    impact     = _derive_impact(capability_tags, sensitivity_tags, risk_tags)
+    primary_risk_class = compute_primary_risk_class(risk_tags)
+    edge_types         = _derive_edge_types(capability_tags, sensitivity_tags, risk_tags)
+    impact             = _derive_impact(capability_tags, sensitivity_tags, risk_tags)
+
+    # detect_control_plane_bridge uses edgeTypes so must be called after _derive_edge_types.
+    _bridge_op = {
+        "riskTags":       risk_tags,
+        "edgeTypes":      edge_types,
+        "capabilityTags": capability_tags,
+        "suffixKind":     suffix_kind,
+    }
+    is_control_plane_bridge = detect_control_plane_bridge(_bridge_op)
+
+    # compute_presentation_fields requires primaryRiskClass and isHighRisk.
+    _pres_op = {
+        **_bridge_op,
+        "sensitivityTags":  sensitivity_tags,
+        "isHighRisk":       is_high_risk,
+        "primaryRiskClass": primary_risk_class,
+        "actionName":       action_name,
+    }
+    presentation = compute_presentation_fields(_pres_op)
 
     # reasonSummary: short human-readable string joining the top reasons.
     reason_summary = "; ".join(risk_reasons) if risk_reasons else "no matched rules"
@@ -1464,6 +1631,12 @@ def classify_operation(
         "riskReasons":         risk_reasons,
         "reasonSummary":       reason_summary,
         "isHighRisk":          is_high_risk,
+        # Primary risk classification
+        "primaryRiskClass":    primary_risk_class,
+        # Presentation layer fields (Atlas-ready)
+        "presentationSeverity": presentation["presentationSeverity"],
+        "summaryTitle":         presentation["summaryTitle"],
+        "summaryWhyItMatters":  presentation["summaryWhyItMatters"],
         # Semantic / graph fields
         "isControlPlaneBridge": is_control_plane_bridge,
         "edgeTypes":            edge_types,
@@ -1483,13 +1656,27 @@ def build_provider_summary(
     total          = len(operations)
     resource_types = sorted({op["primaryResourceType"] for op in operations})
 
-    action_ops    = [op for op in operations if op["suffixKind"] == "action"]
-    high_risk_ops = [op for op in operations if op["isHighRisk"]]
+    action_ops          = [op for op in operations if op["suffixKind"] == "action"]
+    high_risk_ops       = [op for op in operations if op["isHighRisk"]]
+    high_risk_action_ops = [
+        op for op in operations
+        if op["isHighRisk"] and op["suffixKind"] == "action"
+    ]
 
     # ── Density metrics ───────────────────────────────────────────────────────
-    action_density    = round(len(action_ops) / total, DENSITY_PRECISION) if total else 0.0
-    high_risk_density = (
-        round(len(high_risk_ops) / len(action_ops), DENSITY_PRECISION)
+    # actionDensity: fraction of all operations that are actions.
+    action_density = round(len(action_ops) / total, DENSITY_PRECISION) if total else 0.0
+
+    # highRiskOperationDensity: fraction of ALL operations that are high-risk.
+    # Always in [0.0, 1.0].
+    high_risk_operation_density = (
+        round(len(high_risk_ops) / total, DENSITY_PRECISION) if total else 0.0
+    )
+
+    # highRiskActionDensity: fraction of ACTION operations that are high-risk.
+    # Always in [0.0, 1.0].
+    high_risk_action_density = (
+        round(len(high_risk_action_ops) / len(action_ops), DENSITY_PRECISION)
         if action_ops else 0.0
     )
 
@@ -1519,6 +1706,22 @@ def build_provider_summary(
     network_exposure_actions   = sum(
         1 for op in operations if "exposure-change" in op["riskTags"]
     )
+    trust_boundary_actions     = sum(
+        1 for op in operations if "trust-boundary-crossing" in op["riskTags"]
+    )
+
+    # ── Provider fingerprint: dominant risk type ──────────────────────────────
+    _fingerprint_counts: dict[str, int] = {
+        "execution":        execution_actions,
+        "secret_sensitive": secret_sensitive_actions,
+        "trust":            trust_boundary_actions,
+    }
+    _max_count = max(_fingerprint_counts.values())
+    if _max_count == 0:
+        dominant_risk_type = "mixed"
+    else:
+        _winners = [k for k, v in _fingerprint_counts.items() if v == _max_count]
+        dominant_risk_type = _winners[0] if len(_winners) == 1 else "mixed"
 
     # ── Top risk tags (frequency map, top TOP_RISK_TAGS_LIMIT by count) ─────────
     all_risk_tags: list[str] = [
@@ -1532,16 +1735,21 @@ def build_provider_summary(
     )
 
     return {
-        # Existing fields (backward compat)
+        # Core identity / aggregate fields
         "provider":             provider,
         "resourceTypes":        len(resource_types),
         "totalOperations":      total,
         "actionOperations":     len(action_ops),
-        "highRiskActions":      len(high_risk_ops),
+        # High-risk counts
+        "highRiskOperations":       len(high_risk_ops),
+        "highRiskActionOperations": len(high_risk_action_ops),
+        # Backward-compat alias (matches highRiskOperations)
+        "highRiskActions":          len(high_risk_ops),
         "notableResourceTypes": notable_resource_types,
-        # New density / scoring fields
-        "actionDensity":         action_density,
-        "highRiskDensity":       high_risk_density,
+        # Corrected density metrics (all guaranteed in [0.0, 1.0])
+        "actionDensity":              action_density,
+        "highRiskOperationDensity":   high_risk_operation_density,
+        "highRiskActionDensity":      high_risk_action_density,
         "maxOperationRiskScore": max_risk_score,
         # Tag-family operation counts
         "executionActions":         execution_actions,
@@ -1550,6 +1758,9 @@ def build_provider_summary(
         "keySensitiveActions":      key_sensitive_actions,
         "destructiveActions":       destructive_actions,
         "networkExposureActions":   network_exposure_actions,
+        "trustBoundaryActions":     trust_boundary_actions,
+        # Provider fingerprint
+        "dominantRiskType":     dominant_risk_type,
         # Risk tag frequency map (top 10 tags by occurrence count)
         "topRiskTags":          top_risk_tags,
     }
