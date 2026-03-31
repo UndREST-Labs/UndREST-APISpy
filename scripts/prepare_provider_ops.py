@@ -172,8 +172,8 @@ def main(argv: list[str] | None = None) -> int:
         raw = json.load(fh)
 
     if isinstance(raw, dict):
-        # Handle wrapped format: { "operations": [...] }
-        records: list[dict] = raw.get("operations", [])
+        # provider_ops_sweep.py wraps output as { "metadata": {...}, "records": [...] }
+        records: list[dict] = raw.get("records", raw.get("operations", []))
     elif isinstance(raw, list):
         records = raw
     else:
