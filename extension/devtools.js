@@ -34,6 +34,11 @@ chrome.devtools.panels.create(
 // entry so the data is always up-to-date without O(n^2) read/parse overhead.
 const _sweepBuffer = [];
 
+// Kick off enrichment data load — optional; failure is silently ignored.
+if (typeof AzureEnrichment !== "undefined") {
+  AzureEnrichment.load().catch(() => {});
+}
+
 function _flushSweepBuffer() {
   try {
     localStorage.setItem("apispy_sweep_entries", JSON.stringify(_sweepBuffer));
@@ -88,6 +93,28 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
     result = Matcher.classify(norm, shard, { inScope: true, shardLoadError });
   }
 
+  // Optional Azure enrichment (only when loaded — graceful fallback otherwise)
+  let enrichment = null;
+  let enrichmentConfidence = null;
+  let enrichmentParts = null;
+  if (typeof AzureEnrichment !== "undefined" && AzureEnrichment.isLoaded()) {
+    try {
+      const em = AzureEnrichment.matchRequest(norm);
+      if (em) {
+        enrichment = em.record;
+        enrichmentConfidence = em.confidence;
+        enrichmentParts = em.parts;
+        // Promote status when no exact/version match but enrichment is confident
+        const promotable = result.status === Matcher.STATUS.PROVIDER_KNOWN_NO_ROUTE ||
+                           result.status === Matcher.STATUS.NO_SPEC_MATCH;
+        if (promotable && (enrichmentConfidence === "high" || enrichmentConfidence === "medium")) {
+          result.status = Matcher.STATUS.PROVIDER_KNOWN;
+          result.label  = Matcher.STATUS_LABELS[Matcher.STATUS.PROVIDER_KNOWN];
+        }
+      }
+    } catch (_) { /* enrichment is optional */ }
+  }
+
   // Only store entries where a provider namespace was identified, or ARM root
   // routes — same filter as panel.js's onRequestFinished.
   if (result.provider_namespace === null && result.status !== Matcher.STATUS.ARM_ROOT_ROUTE) {
@@ -113,6 +140,9 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
       matched_versions:   result.matched_versions   || null,
       shard_name:         result.shard_name         || null,
       error:              result.error              || null,
+      enrichment:           enrichment,
+      enrichmentConfidence: enrichmentConfidence,
+      enrichmentParts:      enrichmentParts,
     },
   };
 
