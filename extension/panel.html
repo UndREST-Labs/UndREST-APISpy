@@ -16,12 +16,21 @@
         <button class="filter-btn active" data-status="all" title="Show all statuses">All</button>
         <button class="filter-btn active" data-status="exact_match" title="Exact match">&#x2705; Exact</button>
         <button class="filter-btn active" data-status="route_match_version_mismatch" title="Version mismatch">&#x26A0;&#xFE0F; Version</button>
+        <button class="filter-btn active" data-status="provider_known" title="Provider known (enrichment match)">&#x1F537; Known</button>
         <button class="filter-btn active" data-status="provider_known_route_unknown" title="Unknown route">&#x1F536; Route</button>
         <button class="filter-btn active" data-status="no_spec_match" title="No spec match">&#x274C; No match</button>
         <button class="filter-btn active" data-status="arm_root_route" title="ARM root route">&#x2139;&#xFE0F; ARM root</button>
       </div>
 
       <button id="btn-autoscroll" class="btn-toggle active" title="Auto-scroll to newest request (click to toggle)">Scroll</button>
+      <select id="sort-select" title="Sort order">
+        <option value="chronological">Sort: Time</option>
+        <option value="interesting">Sort: Interesting first</option>
+        <option value="risk">Sort: Highest risk first</option>
+      </select>
+      <button id="btn-qf-interesting" class="btn-toggle" title="Show only interesting requests">Interesting</button>
+      <button id="btn-qf-high-risk" class="btn-toggle" title="Show only high-risk enriched requests">High risk</button>
+      <button id="btn-qf-provider-known" class="btn-toggle" title="Show only provider-known requests">Provider known</button>
       <button id="btn-packs" title="View and select active API packs">Packs</button>
       <button id="btn-copy-all" title="Copy all visible rows to clipboard">Copy list</button>
       <button id="btn-csv" title="Save all results to CSV file">Save CSV</button>
@@ -102,6 +111,7 @@
   <script src="lib/normalizer.js"></script>
   <script src="lib/loader.js"></script>
   <script src="lib/matcher.js"></script>
+  <script src="lib/azure-enrichment.js"></script>
   <script src="panel.js"></script>
 </body>
 </html>

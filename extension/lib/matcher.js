@@ -33,6 +33,7 @@
   const STATUS = Object.freeze({
     EXACT_MATCH:               "exact_match",
     ROUTE_MISMATCH:            "route_match_version_mismatch",
+    PROVIDER_KNOWN:            "provider_known",
     PROVIDER_KNOWN_NO_ROUTE:   "provider_known_route_unknown",
     NO_SPEC_MATCH:             "no_spec_match",
     ARM_ROOT_ROUTE:            "arm_root_route",
@@ -45,6 +46,7 @@
   const STATUS_LABELS = Object.freeze({
     [STATUS.EXACT_MATCH]:             "✅ Exact match",
     [STATUS.ROUTE_MISMATCH]:          "⚠️ Version mismatch",
+    [STATUS.PROVIDER_KNOWN]:          "🔷 Provider known",
     [STATUS.PROVIDER_KNOWN_NO_ROUTE]: "🔶 Unknown route",
     [STATUS.NO_SPEC_MATCH]:           "❌ No spec match",
     [STATUS.ARM_ROOT_ROUTE]:          "ℹ️ ARM root route",

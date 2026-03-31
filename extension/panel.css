@@ -17,12 +17,13 @@
   --brand:       #a78bfa;
 
   /* status badge colours */
-  --c-exact:     #4ade80;
-  --c-mismatch:  #facc15;
-  --c-unknown:   #fb923c;
-  --c-no-match:  #f87171;
-  --c-scope:     #94a3b8;
-  --c-arm-root:  #67e8f9;
+  --c-exact:          #4ade80;
+  --c-mismatch:       #facc15;
+  --c-provider-known: #38bdf8;
+  --c-unknown:        #fb923c;
+  --c-no-match:       #f87171;
+  --c-scope:          #94a3b8;
+  --c-arm-root:       #67e8f9;
 
   --font-mono:   "Consolas", "Menlo", "Monaco", monospace;
   --font-ui:     system-ui, -apple-system, sans-serif;
@@ -143,6 +144,27 @@ button:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
+
+/* Sort select in toolbar */
+#sort-select {
+  font-size: 11px;
+  font-family: var(--font-ui);
+  background: var(--bg-alt);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 3px 6px;
+  cursor: pointer;
+}
+#sort-select:focus {
+  outline: none;
+  border-color: var(--accent);
+}
+
+/* Quick-filter buttons — slightly different tint when active */
+#btn-qf-interesting.active { border-color: #fb923c; color: #fb923c; }
+#btn-qf-high-risk.active   { border-color: #f87171; color: #f87171; }
+#btn-qf-provider-known.active { border-color: var(--c-provider-known); color: var(--c-provider-known); }
 
 .status-bar {
   display: flex;
@@ -277,10 +299,101 @@ main {
 
 .status-exact_match              { background: #14532d; color: var(--c-exact); }
 .status-route_match_version_mismatch { background: #422006; color: var(--c-mismatch); }
+.status-provider_known           { background: #0c2544; color: var(--c-provider-known); }
 .status-provider_known_route_unknown { background: #431407; color: var(--c-unknown); }
 .status-no_spec_match            { background: #450a0a; color: var(--c-no-match); }
 .status-arm_root_route           { background: #0c3044; color: var(--c-arm-root); }
 .status-out_of_scope             { background: #1e293b; color: var(--c-scope); }
+
+/* ── Detail panel sections ───────────────────────── */
+.detail-section {
+  margin-bottom: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+.detail-section-heading {
+  padding: 5px 10px;
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: .06em;
+  color: var(--text-dim);
+  background: var(--bg-alt);
+  border-bottom: 1px solid var(--border);
+  user-select: none;
+}
+details.detail-section > summary.detail-section-heading {
+  cursor: pointer;
+  list-style: none;
+}
+details.detail-section > summary.detail-section-heading::before {
+  content: "▶ ";
+  font-size: 9px;
+}
+details.detail-section[open] > summary.detail-section-heading::before {
+  content: "▼ ";
+}
+.detail-section-body {
+  display: grid;
+  grid-template-columns: 155px 1fr;
+  gap: 0;
+  background: var(--bg);
+}
+.detail-section-body dt {
+  padding: 4px 10px;
+  font-size: 11px;
+  color: var(--text-dim);
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: flex-start;
+  padding-top: 5px;
+}
+.detail-section-body dd {
+  padding: 4px 10px;
+  font-size: 11px;
+  font-family: var(--font-mono);
+  border-bottom: 1px solid var(--border);
+  word-break: break-all;
+  display: flex;
+  align-items: flex-start;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.detail-section-body dt:last-of-type,
+.detail-section-body dd:last-of-type {
+  border-bottom: none;
+}
+
+/* ── Severity chips ──────────────────────────────── */
+.severity-critical { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 700; background: #450a0a; color: #f87171; }
+.severity-high     { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 700; background: #422006; color: #fb923c; }
+.severity-medium   { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 700; background: #422001; color: #facc15; }
+.severity-low      { display: inline-block; padding: 1px 6px; border-radius: 10px; font-size: 10px; font-weight: 700; background: #0c2544; color: #38bdf8; }
+
+/* ── Tag chips ───────────────────────────────────── */
+.tag-chip {
+  display: inline-block;
+  padding: 1px 7px;
+  border-radius: 10px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  background: var(--bg-alt);
+  color: var(--text-dim);
+  border: 1px solid var(--border);
+}
+
+/* ── Multiline value ─────────────────────────────── */
+.multiline {
+  white-space: pre-wrap;
+  word-break: break-word;
+  font-family: var(--font-ui);
+  line-height: 1.5;
+}
+
+/* ── Bool flag in diagnostics ────────────────────── */
+.diag-yes { color: var(--c-exact); }
+.diag-no  { color: var(--text-dim); }
 
 /* ── Empty state ─────────────────────────────────── */
 .empty-state {

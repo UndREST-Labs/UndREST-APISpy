@@ -13,6 +13,7 @@
 const ALL_STATUSES = Object.freeze([
   "exact_match",
   "route_match_version_mismatch",
+  "provider_known",
   "provider_known_route_unknown",
   "no_spec_match",
   "arm_root_route",
@@ -25,6 +26,7 @@ const CSV_HEADER = [
   "Time", "URL", "Batch Sub", "Batch Name", "Method", "Host", "Path",
   "Normalised Path", "api-version", "Status", "Reason",
   "Provider Namespace", "Matched Route", "Available Versions", "Shard", "Load Error",
+  "Enrichment Title", "Risk Score", "Severity",
 ].join(",");
 
 // ── State ────────────────────────────────────────────────────────────────────
@@ -56,6 +58,27 @@ const state = {
   autoscroll: true,
   /** @type {number} Current height of the detail panel in px. */
   detailHeight: DEFAULT_DETAIL_HEIGHT,
+  /**
+   * Sort mode for the request list.
+   * "chronological" | "interesting" | "risk"
+   * @type {string}
+   */
+  sortMode: "chronological",
+  /**
+   * Quick-filter: when true only show "interesting" requests.
+   * @type {boolean}
+   */
+  quickFilterInteresting: false,
+  /**
+   * Quick-filter: when true only show requests with enrichment and high severity.
+   * @type {boolean}
+   */
+  quickFilterHighRisk: false,
+  /**
+   * Quick-filter: when true only show provider_known requests.
+   * @type {boolean}
+   */
+  quickFilterProviderKnown: false,
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -85,11 +108,21 @@ const packList           = document.getElementById("pack-list");
 const packDialogClose    = document.getElementById("pack-dialog-close");
 const packApply          = document.getElementById("pack-apply");
 const packCancel         = document.getElementById("pack-cancel");
+const sortSelect         = document.getElementById("sort-select");
+const btnQfInteresting   = document.getElementById("btn-qf-interesting");
+const btnQfHighRisk      = document.getElementById("btn-qf-high-risk");
+const btnQfProviderKnown = document.getElementById("btn-qf-provider-known");
 
 // ── Initialisation ────────────────────────────────────────────────────────────
 
 async function init() {
   setStatus("Loading index...");
+
+  // Start loading Azure enrichment data in the background (optional — the
+  // extension works correctly if this file is absent).
+  if (typeof AzureEnrichment !== "undefined") {
+    AzureEnrichment.load();
+  }
 
   try {
     const packs     = await Loader.listBundledPacks();
@@ -376,6 +409,51 @@ async function buildEntry(req, norm, scope) {
     result = Matcher.classify(norm, shard, { inScope: true, shardLoadError });
   }
 
+  // ── Azure enrichment (Azure pack only, optional) ──────────────────────────
+  // Attempt enrichment for any in-scope, normalised request.  If enrichment
+  // data is not loaded this is a no-op and the extension falls back to its
+  // existing classification result.
+  const enrichmentLoaded = typeof AzureEnrichment !== "undefined" && AzureEnrichment.isLoaded();
+  const enrichmentAttempted = typeof AzureEnrichment !== "undefined" && AzureEnrichment.wasAttempted();
+
+  let enrichResult = null;
+  let inferredParts = null;
+
+  if (norm && norm.ok && typeof AzureEnrichment !== "undefined") {
+    inferredParts = AzureEnrichment.inferRequestParts(norm);
+    enrichResult  = AzureEnrichment.matchRequest(norm);
+
+    if (enrichResult && (enrichResult.confidence === "high" || enrichResult.confidence === "medium")) {
+      // Attach enrichment data to result for the detail panel.
+      result.enrichment           = enrichResult.enrichment;
+      result.enrichmentConfidence = enrichResult.confidence;
+      result.enrichmentParts      = enrichResult.parts;
+
+      // Promote status to provider_known when the existing classification did
+      // not find an exact spec match — but never downgrade an exact or
+      // version-mismatch result.
+      const promotable = result.status === Matcher.STATUS.PROVIDER_KNOWN_NO_ROUTE ||
+                         result.status === Matcher.STATUS.NO_SPEC_MATCH;
+      if (promotable) {
+        result.status = Matcher.STATUS.PROVIDER_KNOWN;
+        result.label  = Matcher.STATUS_LABELS[Matcher.STATUS.PROVIDER_KNOWN];
+      }
+    }
+  }
+
+  // ── Per-entry diagnostics ─────────────────────────────────────────────────
+  result.diagnostics = {
+    providerInferred:     !!(inferredParts && inferredParts.providerInferred) ||
+                          !!(result.provider_namespace),
+    resourcePathInferred: !!(inferredParts && inferredParts.resourcePathInferred),
+    actionInferred:       !!(inferredParts && inferredParts.actionInferred),
+    routeMatchFound:      result.status === Matcher.STATUS.EXACT_MATCH ||
+                          result.status === Matcher.STATUS.ROUTE_MISMATCH,
+    providerOpMatch:      !!enrichResult,
+    enrichmentLoaded,
+    enrichmentAttempted,
+  };
+
   return {
     idx,
     time,
@@ -468,10 +546,10 @@ function escHtml(str) {
     .replace(/"/g, "&quot;");
 }
 
-/** Re-render the table from scratch applying current filter. */
+/** Re-render the table from scratch applying current filter and sort. */
 function rerender() {
   tbody.innerHTML = "";
-  state.requests.forEach((entry, idx) => renderRow(entry, idx));
+  _sortedIndices().forEach((idx) => renderRow(state.requests[idx], idx));
   toggleEmptyState();
   updateCountBadge();
 }
@@ -530,48 +608,160 @@ function showDetail(entry) {
   detailHeading.textContent = heading;
   detailFields.innerHTML = "";
 
-  // Fields: [label, value, cssClass?, isLink?]
-  const fields = [
-    ["URL",                 entry.url || "",                             "url-field", true],
-    ["Time",                entry.time],
-    ...(entry.isBatchSub ? [["Batch sub-request", entry.batchName != null ? "#" + entry.batchName : "yes"]] : []),
-    ["Method",              entry.method],
-    ["Host",                entry.host],
-    ["Path",                entry.pathname],
-    ["Normalised path",     entry.normPath],
-    ["api-version",         entry.apiVersion || ""],
-    ["Status",              r.label || r.status, "status-text"],
-    ["Provider namespace",  r.provider_namespace || ""],
-    ["Matched route",       r.matched_route_key || ""],
-    ["Available versions",  (r.matched_versions && r.matched_versions.join(", ")) || ""],
-    ...(r.available_methods ? [["Available methods", r.available_methods.join(", ")]] : []),
-    ["Shard / source",      r.shard_name || ""],
-    ["Reason",              r.reason || ""],
-    ...(r.error ? [["Load error", r.error, "load-error"]] : []),
-  ];
+  // ── A. Observed ────────────────────────────────────────────────────────────
+  const sectionObserved = _makeDetailSection("Observed");
+  _addDetailRow(sectionObserved, "URL",            entry.url || "",          { isLink: true });
+  _addDetailRow(sectionObserved, "Time",           entry.time);
+  if (entry.isBatchSub) {
+    _addDetailRow(sectionObserved, "Batch sub",    entry.batchName != null ? "#" + entry.batchName : "yes");
+  }
+  _addDetailRow(sectionObserved, "Method",         entry.method);
+  _addDetailRow(sectionObserved, "Host",           entry.host);
+  _addDetailRow(sectionObserved, "Path",           entry.pathname);
+  _addDetailRow(sectionObserved, "Normalised path",entry.normPath);
+  _addDetailRow(sectionObserved, "api-version",    entry.apiVersion || "");
+  detailFields.appendChild(sectionObserved);
 
-  fields.forEach(([label, value, extraClass, isLink]) => {
-    const dt = document.createElement("dt");
-    dt.textContent = label;
-    const dd = document.createElement("dd");
-    if (isLink && value) {
-      const a = document.createElement("a");
-      a.href = value;
-      a.textContent = value;
-      a.target = "_blank";
-      a.rel = "noopener noreferrer";
-      dd.appendChild(a);
-    } else {
-      dd.textContent = value;
+  // ── B. Classification ──────────────────────────────────────────────────────
+  const sectionClass = _makeDetailSection("Classification");
+  _addDetailRow(sectionClass, "Status",            r.label || r.status, { extraClass: "status-text" });
+  if (r.enrichmentConfidence) {
+    _addDetailRow(sectionClass, "Confidence",      r.enrichmentConfidence);
+  }
+  _addDetailRow(sectionClass, "Provider",          r.provider_namespace || "");
+  if (r.matched_route_key) {
+    _addDetailRow(sectionClass, "Matched route",   r.matched_route_key);
+  }
+  if (r.matched_versions && r.matched_versions.length) {
+    _addDetailRow(sectionClass, "Available versions", r.matched_versions.join(", "));
+  }
+  if (r.available_methods && r.available_methods.length) {
+    _addDetailRow(sectionClass, "Available methods",  r.available_methods.join(", "));
+  }
+  _addDetailRow(sectionClass, "Shard / source",    r.shard_name || "");
+  _addDetailRow(sectionClass, "Reason",            r.reason || "");
+  if (r.error) {
+    _addDetailRow(sectionClass, "Load error",      r.error, { extraClass: "load-error" });
+  }
+  detailFields.appendChild(sectionClass);
+
+  // ── C. Insight (only when enrichment data is present) ─────────────────────
+  if (r.enrichment) {
+    const en = r.enrichment;
+    const sectionInsight = _makeDetailSection("Insight");
+    if (en.summaryTitle) {
+      _addDetailRow(sectionInsight, "What",              en.summaryTitle);
     }
-    if (extraClass) dd.classList.add(extraClass);
-    detailFields.appendChild(dt);
-    detailFields.appendChild(dd);
-  });
+    if (en.summaryWhyItMatters) {
+      _addDetailRow(sectionInsight, "Why it matters",    en.summaryWhyItMatters, { multiline: true });
+    }
+    if (en.primaryRiskClass) {
+      _addDetailRow(sectionInsight, "Risk class",        en.primaryRiskClass);
+    }
+    if (en.presentationSeverity) {
+      _addDetailRow(sectionInsight, "Severity",          en.presentationSeverity, {
+        extraClass: "severity-" + en.presentationSeverity,
+      });
+    }
+    if (typeof en.riskScore === "number") {
+      _addDetailRow(sectionInsight, "Risk score",        String(en.riskScore));
+    }
+    if (en.riskTags && en.riskTags.length) {
+      _addDetailRow(sectionInsight, "Risk tags",         en.riskTags.join(", "), { extraClass: "tags-field" });
+    }
+    if (en.capabilityTags && en.capabilityTags.length) {
+      _addDetailRow(sectionInsight, "Capability tags",   en.capabilityTags.join(", "), { extraClass: "tags-field" });
+    }
+    if (typeof en.isControlPlaneBridge === "boolean") {
+      _addDetailRow(sectionInsight, "Control-plane bridge", en.isControlPlaneBridge ? "yes" : "no");
+    }
+    detailFields.appendChild(sectionInsight);
+  }
+
+  // ── D. Diagnostics (collapsed by default) ─────────────────────────────────
+  const diag = r.diagnostics || {};
+  const sectionDiag = _makeDetailSection("Diagnostics", { collapsible: true, collapsed: true });
+  _addDetailRow(sectionDiag, "Provider inferred?",      diag.providerInferred     ? "yes" : "no");
+  _addDetailRow(sectionDiag, "Resource path inferred?", diag.resourcePathInferred ? "yes" : "no");
+  _addDetailRow(sectionDiag, "Action inferred?",        diag.actionInferred       ? "yes" : "no");
+  _addDetailRow(sectionDiag, "Route DB match?",         diag.routeMatchFound      ? "yes" : "no");
+  _addDetailRow(sectionDiag, "Provider-op match?",      diag.providerOpMatch      ? "yes" : "no");
+  _addDetailRow(sectionDiag, "Enrichment loaded?",      diag.enrichmentLoaded     ? "yes" : (diag.enrichmentAttempted ? "no (file absent)" : "no (not attempted)"));
+  detailFields.appendChild(sectionDiag);
 
   detailPanel.style.height = state.detailHeight + "px";
   detailPanel.classList.remove("hidden");
   updateTbodyHeight();
+}
+
+/**
+ * Build a detail section container.
+ * @param {string} title
+ * @param {{ collapsible?: boolean, collapsed?: boolean }} [opts]
+ * @returns {HTMLElement}
+ */
+function _makeDetailSection(title, opts) {
+  opts = opts || {};
+  if (opts.collapsible) {
+    const details = document.createElement("details");
+    details.className = "detail-section";
+    if (!opts.collapsed) details.open = true;
+    const summary = document.createElement("summary");
+    summary.className = "detail-section-heading";
+    summary.textContent = title;
+    details.appendChild(summary);
+    const body = document.createElement("dl");
+    body.className = "detail-section-body";
+    details.appendChild(body);
+    return details;
+  }
+  const div = document.createElement("div");
+  div.className = "detail-section";
+  const h = document.createElement("div");
+  h.className = "detail-section-heading";
+  h.textContent = title;
+  div.appendChild(h);
+  const body = document.createElement("dl");
+  body.className = "detail-section-body";
+  div.appendChild(body);
+  return div;
+}
+
+/**
+ * Add a dt/dd pair to a section container (div or details element).
+ * @param {HTMLElement} section  Section element from _makeDetailSection.
+ * @param {string} label
+ * @param {string} value
+ * @param {{ extraClass?: string, isLink?: boolean, multiline?: boolean }} [opts]
+ */
+function _addDetailRow(section, label, value, opts) {
+  opts = opts || {};
+  const body = section.querySelector("dl.detail-section-body");
+  if (!body) return;
+
+  const dt = document.createElement("dt");
+  dt.textContent = label;
+
+  const dd = document.createElement("dd");
+  if (opts.isLink && value) {
+    const a = document.createElement("a");
+    a.href = value;
+    a.textContent = value;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    dd.appendChild(a);
+    dd.classList.add("url-field");
+  } else if (opts.multiline) {
+    dd.textContent = value;
+    dd.classList.add("multiline");
+  } else {
+    dd.textContent = value;
+  }
+
+  if (opts.extraClass) dd.classList.add(opts.extraClass);
+
+  body.appendChild(dt);
+  body.appendChild(dd);
 }
 
 function closeDetail() {
@@ -596,7 +786,81 @@ function passesFilter(entry) {
   if (cf.status     !== null && !cf.status.has(entry.result.status || ""))         return false;
   if (cf.reason     !== null && !cf.reason.has(entry.result.reason || ""))         return false;
   if (cf.shard      !== null && !cf.shard.has(entry.result.shard_name || ""))      return false;
+
+  // Quick-filters (additive: any active quick-filter must pass)
+  if (state.quickFilterProviderKnown && entry.result.status !== "provider_known") return false;
+  if (state.quickFilterHighRisk) {
+    const score = entry.result.enrichment && entry.result.enrichment.riskScore;
+    if (typeof score !== "number" || score < 6) return false;
+  }
+  if (state.quickFilterInteresting) {
+    if (_interestScore(entry) > 4) return false; // 0=most interesting, >4=least interesting
+  }
+
   return true;
+}
+
+// ── Sort helpers ──────────────────────────────────────────────────────────────
+
+/**
+ * Return a numeric interest score for an entry (lower = more interesting).
+ * Used for "interesting-first" sort mode and the "interesting" quick-filter.
+ *
+ * Priority:
+ *   0  provider_known
+ *   1  version_mismatch
+ *   2  exact + enrichment + high severity
+ *   3  provider_known_route_unknown (unknown route, no enrichment upgrade)
+ *   4  exact match (no enrichment or low severity)
+ *   5  no_spec_match / arm_root_route / other
+ *
+ * @param {RequestEntry} entry
+ * @returns {number}
+ */
+function _interestScore(entry) {
+  const status = entry.result.status;
+  if (status === "provider_known") return 0;
+  if (status === "route_match_version_mismatch") return 1;
+  if (status === "exact_match" && entry.result.enrichment) {
+    const sev = entry.result.enrichment.presentationSeverity;
+    if (sev === "high" || sev === "critical") return 2;
+  }
+  if (status === "provider_known_route_unknown") return 3;
+  if (status === "exact_match") return 4;
+  return 5;
+}
+
+/**
+ * Return an array of request indices sorted according to the current sortMode.
+ * Always returns indices into state.requests (original positions).
+ * @returns {number[]}
+ */
+function _sortedIndices() {
+  const indices = state.requests.map((_, i) => i);
+  if (state.sortMode === "chronological") return indices;
+
+  return indices.sort(function (a, b) {
+    const ea = state.requests[a];
+    const eb = state.requests[b];
+
+    if (state.sortMode === "interesting") {
+      const diff = _interestScore(ea) - _interestScore(eb);
+      if (diff !== 0) return diff;
+      return a - b; // stable within same score
+    }
+
+    if (state.sortMode === "risk") {
+      const ra = (ea.result.enrichment && ea.result.enrichment.riskScore) || 0;
+      const rb = (eb.result.enrichment && eb.result.enrichment.riskScore) || 0;
+      if (ra !== rb) return rb - ra; // descending
+      const ia = _interestScore(ea);
+      const ib = _interestScore(eb);
+      if (ia !== ib) return ia - ib;
+      return a - b;
+    }
+
+    return a - b;
+  });
 }
 
 // ── Column-level filter dropdown ──────────────────────────────────────────────
@@ -749,6 +1013,7 @@ function execCommandCopy(text) {
  */
 function entryToCsvRow(entry) {
   const r = entry.result;
+  const en = r.enrichment || {};
   const cols = [
     entry.time,
     entry.url || "",
@@ -766,6 +1031,9 @@ function entryToCsvRow(entry) {
     (r.matched_versions && r.matched_versions.join("; ")) || "",
     r.shard_name || "",
     r.error || "",
+    en.summaryTitle || "",
+    typeof en.riskScore === "number" ? String(en.riskScore) : "",
+    en.presentationSeverity || "",
   ];
   return cols.map((v) => '"' + String(v).replace(/"/g, '""') + '"').join(",");
 }
@@ -826,6 +1094,15 @@ function copyEntryDetail(entry) {
   }
   if (r.error) {
     lines.push("Load Error: " + r.error);
+  }
+  if (r.enrichment) {
+    const en = r.enrichment;
+    lines.push("---");
+    if (en.summaryTitle)      lines.push("What: "          + en.summaryTitle);
+    if (en.summaryWhyItMatters) lines.push("Why it matters: " + en.summaryWhyItMatters);
+    if (en.presentationSeverity) lines.push("Severity: "   + en.presentationSeverity);
+    if (typeof en.riskScore === "number") lines.push("Risk Score: " + en.riskScore);
+    if (r.enrichmentConfidence) lines.push("Confidence: "  + r.enrichmentConfidence);
   }
   copyToClipboard(lines.join("\n"));
 }
@@ -1026,6 +1303,38 @@ function attachUIListeners() {
     state.autoscroll = !state.autoscroll;
     btnAutoscroll.classList.toggle("active", state.autoscroll);
   });
+
+  // Sort mode
+  if (sortSelect) {
+    sortSelect.value = state.sortMode;
+    sortSelect.addEventListener("change", () => {
+      state.sortMode = sortSelect.value;
+      rerender();
+    });
+  }
+
+  // Quick-filter buttons
+  if (btnQfInteresting) {
+    btnQfInteresting.addEventListener("click", () => {
+      state.quickFilterInteresting = !state.quickFilterInteresting;
+      btnQfInteresting.classList.toggle("active", state.quickFilterInteresting);
+      rerender();
+    });
+  }
+  if (btnQfHighRisk) {
+    btnQfHighRisk.addEventListener("click", () => {
+      state.quickFilterHighRisk = !state.quickFilterHighRisk;
+      btnQfHighRisk.classList.toggle("active", state.quickFilterHighRisk);
+      rerender();
+    });
+  }
+  if (btnQfProviderKnown) {
+    btnQfProviderKnown.addEventListener("click", () => {
+      state.quickFilterProviderKnown = !state.quickFilterProviderKnown;
+      btnQfProviderKnown.classList.toggle("active", state.quickFilterProviderKnown);
+      rerender();
+    });
+  }
 
   // Pack settings dialog
   btnPacks.addEventListener("click", openPackDialog);
