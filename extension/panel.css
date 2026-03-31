@@ -511,12 +511,14 @@ details.detail-section[open] > summary.detail-section-heading::before {
 .detail-close:hover { color: var(--text); }
 
 .detail-fields {
-  display: grid;
-  grid-template-columns: 160px 1fr;
-  gap: 4px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
   font-size: 12px;
 }
 
+/* Legacy dt/dd styles — kept for fallback, scoped away from section layout */
+.detail-fields > dl dt,
 .detail-fields dt {
   color: var(--text-dim);
   font-weight: 600;
@@ -524,6 +526,7 @@ details.detail-section[open] > summary.detail-section-heading::before {
   white-space: nowrap;
 }
 
+.detail-fields > dl dd,
 .detail-fields dd {
   font-family: var(--font-mono);
   color: var(--text);
