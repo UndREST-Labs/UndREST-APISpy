@@ -89,6 +89,7 @@ Portal sweep and provider ops sweep require Azure device-code authentication.
 
 | Workflow | Trigger | Purpose |
 |----------|---------|---------|
+| `node-tests.yml` | Pull requests + push to `main` | Runs `npm test` for the existing plain-Node JS tests |
 | `update-shards.yml` | `repository_dispatch: speql-shards-updated` or manual | Downloads latest SpecQL shards, runs `prepare_data.py`, commits to `extension/data/` |
 | `update-screenshots.yml` | Push to main | Auto-generates `demos/` screenshots |
 
@@ -99,6 +100,9 @@ cannot download shards.
 ## Canonical validation commands
 
 ```bash
+# Repo-level JavaScript test runner
+npm test
+
 # JavaScript unit tests (Node.js required; no browser/Azure auth needed)
 node tests/test_filters.js
 node tests/test_loader.js
@@ -162,7 +166,8 @@ UndREST-APISpy/
 - Do not commit Azure credentials, subscription IDs, or tokens.
 - The extension must remain offline-capable; do not introduce runtime network dependencies.
 - The extension has no external runtime dependencies; `extension/lib/` must not import npm packages.
-- JS tests in `tests/` must pass with plain `node` — no test runner, no browser, no Azure auth.
+- `npm test` is the repo-level entry point and must remain a thin wrapper around the plain-Node test files.
+- JS tests in `tests/` must pass with plain `node` — no browser, no Azure auth.
 - Shard updates are exclusively owned by the `update-shards.yml` workflow + `scripts/prepare_data.py` pipeline.
 - cARL artefacts in `.github/carl/` are the canonical governance authority for this repository.
 

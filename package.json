@@ -1,0 +1,7 @@
+{
+  "name": "undrest-apispy",
+  "private": true,
+  "scripts": {
+    "test": "node tests/test_filters.js && node tests/test_loader.js && node tests/test_normalizer.js && node tests/test_matcher.js"
+  }
+}
