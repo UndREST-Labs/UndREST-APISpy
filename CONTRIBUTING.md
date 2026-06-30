@@ -78,10 +78,13 @@ To add a new API pack see **[docs/ADDING_A_PACK.md](docs/ADDING_A_PACK.md)**.
 
 ```bash
 # Run all extension tests (Node.js required)
+npm test
+
+# Equivalent plain-Node commands
 node tests/test_filters.js
 node tests/test_loader.js
-node tests/test_matcher.js
 node tests/test_normalizer.js
+node tests/test_matcher.js
 ```
 
 ### Manual Extension Testing
