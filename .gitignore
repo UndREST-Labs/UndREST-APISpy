@@ -47,7 +47,7 @@ inventory/*.min.json
 inventory/api-index-sharded-*.zip
 
 # APISpy portal sweep output files (local/transient)
-apispy-*.csv
+apispy-????-??-??T??-??-??.csv
 apispy-sweep-*.webm
 apispy-portal-sweep-browser.gif
 

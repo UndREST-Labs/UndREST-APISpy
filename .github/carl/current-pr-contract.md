@@ -39,7 +39,7 @@ The following durable invariants remain unchanged:
   - `extension/data/shards/`
   - `extension/data/manifest.json`
   - `extension/data/azure-provider-ops.json`
-  - `demos/`
+  - `demos/apispy-*.png`
 - Update `CONTRIBUTING.md` only as needed to reinforce "do not hand-edit generated data".
 - Update `README.md` if needed to clarify generated artefact ownership boundaries.
 - Update `.github/carl/memory.md` only if durable ownership or validation expectations change.
@@ -83,7 +83,7 @@ The following durable invariants remain unchanged:
 npm test
 git diff --stat HEAD -- extension/data/shards/
 git diff --stat HEAD -- extension/data/manifest.json
-git diff --stat HEAD -- demos/
+git diff --stat HEAD -- demos/apispy-*.png
 git status --short
 ```
 
