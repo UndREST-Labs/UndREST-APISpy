@@ -125,6 +125,34 @@ python3 scripts/prepare_data.py \
   --merge
 ```
 
+## 🤖 cARL Agent Governance
+
+This repository uses [cARL](https://github.com/goldjg/cARL) (Cognitive Agent Runtime Layer) to provide
+persistent governance and architectural context for AI coding agents (GitHub Copilot, Claude, Codex, etc.).
+
+The cARL artefacts live in `.github/carl/` and `.github/instructions/`. They are loaded automatically
+by supported agents at the start of every session. Human contributors do not need to interact with
+cARL directly, but should be aware of:
+
+- **`.github/carl/memory.md`** — Durable architectural truth cache for APISpy. Contains architecture
+  facts, test commands, invariants, and security assumptions that agents carry between sessions.
+- **`.github/carl/current-pr-contract.md`** — Scoped implementation contract for the active PR.
+  Before starting work with an agent, populate this file with the PR goal and approved scope.
+- **`.github/carl/invariants.yml`** — Machine-readable governance invariants enforced across all PRs.
+
+### cARL CLI (optional, for repo maintainers)
+
+If you have the `carl` CLI installed ([download from releases](https://github.com/goldjg/cARL/releases)):
+
+```bash
+# Check runtime health
+carl version
+carl doctor
+
+# Restore any drifted managed artefacts (memory.md and runtime.json are never overwritten)
+carl repair
+```
+
 ## 🔄 Pull Request Process
 
 1. **Fork** [UndREST-APISpy](https://github.com/UndREST-Labs/UndREST-APISpy)
