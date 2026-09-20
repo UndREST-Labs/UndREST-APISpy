@@ -21,6 +21,16 @@ const ALL_STATUSES = Object.freeze([
 
 const DEFAULT_DETAIL_HEIGHT = 220; // px
 const RESEARCH_AI_ENABLED_KEY = "apispy_research_ai_enabled";
+const initialPanelPreferences = typeof PanelPreferences !== "undefined"
+  ? PanelPreferences.load(ALL_STATUSES)
+  : {
+      activeStatuses: ALL_STATUSES.slice(),
+      autoscroll: true,
+      sortMode: "chronological",
+      quickFilterInteresting: false,
+      quickFilterHighRisk: false,
+      quickFilterProviderKnown: false,
+    };
 
 function readAiEnabledPreference() {
   try {
@@ -48,7 +58,7 @@ const state = {
    * An entry is shown when its status is in this set.
    * @type {Set<string>}
    */
-  activeFilters: new Set(ALL_STATUSES),
+  activeFilters: new Set(initialPanelPreferences.activeStatuses),
   /**
    * Per-column filter sets.  null = no filter (all values shown).
    * When a Set is present only entries whose column value is in the Set are shown.
@@ -64,7 +74,7 @@ const state = {
   /** @type {number|null} Index of the selected row (for detail panel). */
   selectedIdx: null,
   /** @type {boolean} Whether newly added rows should be scrolled into view. */
-  autoscroll: true,
+  autoscroll: initialPanelPreferences.autoscroll,
   /** @type {number} Current height of the detail panel in px. */
   detailHeight: DEFAULT_DETAIL_HEIGHT,
   /**
@@ -72,22 +82,22 @@ const state = {
    * "chronological" | "interesting" | "risk"
    * @type {string}
    */
-  sortMode: "chronological",
+  sortMode: initialPanelPreferences.sortMode,
   /**
    * Quick-filter: when true only show "interesting" requests.
    * @type {boolean}
    */
-  quickFilterInteresting: false,
+  quickFilterInteresting: initialPanelPreferences.quickFilterInteresting,
   /**
    * Quick-filter: when true only show requests with enrichment and high severity.
    * @type {boolean}
    */
-  quickFilterHighRisk: false,
+  quickFilterHighRisk: initialPanelPreferences.quickFilterHighRisk,
   /**
    * Quick-filter: when true only show provider_known requests.
    * @type {boolean}
    */
-  quickFilterProviderKnown: false,
+  quickFilterProviderKnown: initialPanelPreferences.quickFilterProviderKnown,
   /** AI hypothesis generation is explicit opt-in and uses only the local mock adapter. */
   aiEnabled: readAiEnabledPreference(),
 };
@@ -96,6 +106,7 @@ const state = {
 
 const tbody          = document.getElementById("request-tbody");
 const statusText     = document.getElementById("status-text");
+const exportFreshness = document.getElementById("export-freshness");
 const requestCount   = document.getElementById("request-count");
 const filterGroup    = document.getElementById("filter-group");
 const btnClear       = document.getElementById("btn-clear");
@@ -126,10 +137,85 @@ const btnQfInteresting   = document.getElementById("btn-qf-interesting");
 const btnQfHighRisk      = document.getElementById("btn-qf-high-risk");
 const btnQfProviderKnown = document.getElementById("btn-qf-provider-known");
 
+function persistPanelPreferences() {
+  if (typeof PanelPreferences === "undefined") return;
+  PanelPreferences.save({
+    activeStatuses: Array.from(state.activeFilters),
+    autoscroll: state.autoscroll,
+    sortMode: state.sortMode,
+    quickFilterInteresting: state.quickFilterInteresting,
+    quickFilterHighRisk: state.quickFilterHighRisk,
+    quickFilterProviderKnown: state.quickFilterProviderKnown,
+  }, ALL_STATUSES);
+}
+
+function syncPanelPreferenceControls() {
+  filterGroup.querySelectorAll(".filter-btn[data-status]").forEach((button) => {
+    const status = button.dataset.status;
+    const active = status === "all"
+      ? state.activeFilters.size === ALL_STATUSES.length
+      : state.activeFilters.has(status);
+    button.classList.toggle("active", active);
+  });
+  btnAutoscroll.classList.toggle("active", state.autoscroll);
+  if (sortSelect) sortSelect.value = state.sortMode;
+  if (btnQfInteresting) btnQfInteresting.classList.toggle("active", state.quickFilterInteresting);
+  if (btnQfHighRisk) btnQfHighRisk.classList.toggle("active", state.quickFilterHighRisk);
+  if (btnQfProviderKnown) btnQfProviderKnown.classList.toggle("active", state.quickFilterProviderKnown);
+}
+
 // ── Initialisation ────────────────────────────────────────────────────────────
+
+function setExportFreshness(freshness) {
+  const value = freshness || { state: "unknown" };
+  const stateName = ["fresh", "stale", "partial", "future", "unknown"].includes(value.state)
+    ? value.state
+    : "unknown";
+  const stamp = value.generated_at
+    ? new Date(value.generated_at).toLocaleDateString()
+    : null;
+  const labels = {
+    fresh: "Export current" + (stamp ? " · " + stamp : ""),
+    stale: "Export stale" + (stamp ? " · " + stamp : ""),
+    partial: "Export metadata partial" + (value.is_stale ? " · stale" : "") + (stamp ? " · oldest " + stamp : ""),
+    future: "Export date ahead of clock",
+    unknown: "Export date unknown",
+  };
+
+  exportFreshness.textContent = labels[stateName];
+  exportFreshness.className = "freshness-badge freshness-" + stateName;
+  const details = [];
+  if (value.age_days != null) details.push(value.age_days + " days old");
+  if (value.stale_after_days != null) details.push("stale after " + value.stale_after_days + " days");
+  if (value.missing_or_invalid_count) details.push(value.missing_or_invalid_count + " missing or invalid timestamp(s)");
+  if (value.future_timestamp_count) details.push(value.future_timestamp_count + " future-dated timestamp(s)");
+  exportFreshness.title = details.join("; ") || labels[stateName];
+}
+
+async function refreshManifestStatus() {
+  try {
+    const [packs, providers, freshness] = await Promise.all([
+      Loader.listBundledPacks(),
+      Loader.listBundledProviders(),
+      Loader.getExportFreshness(),
+    ]);
+    if (packs.length === 1) {
+      setStatus(providers.length + " providers bundled");
+    } else {
+      const enabledIds = Loader.getEnabledPackIds();
+      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
+      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
+    }
+    setExportFreshness(freshness);
+  } catch (err) {
+    setStatus("Failed to load data manifest: " + err.message);
+    setExportFreshness({ state: "unknown" });
+  }
+}
 
 async function init() {
   setStatus("Loading index...");
+  syncPanelPreferenceControls();
   updateAiButton();
 
   // Start loading Azure enrichment data in the background (optional — the
@@ -138,22 +224,7 @@ async function init() {
     AzureEnrichment.load();
   }
 
-  try {
-    const packs     = await Loader.listBundledPacks();
-    const providers = await Loader.listBundledProviders();
-    // Build a status line that mentions pack counts when multiple packs exist.
-    if (packs.length === 1) {
-      const meta  = packs[0].source_metadata || {};
-      const stamp = meta.generated_at ? new Date(meta.generated_at).toLocaleDateString() : "unknown";
-      setStatus(providers.length + " providers bundled (export " + stamp + ")");
-    } else {
-      const enabledIds = Loader.getEnabledPackIds();
-      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
-      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
-    }
-  } catch (err) {
-    setStatus("Failed to load data manifest: " + err.message);
-  }
+  await refreshManifestStatus();
 
   updateTbodyHeight();
 
@@ -1404,20 +1475,8 @@ async function applyPackSelection() {
 
   closePackDialog();
 
-  // Refresh the status bar.
-  try {
-    const packs     = await Loader.listBundledPacks();
-    const providers = await Loader.listBundledProviders();
-    if (packs.length === 1) {
-      const meta  = packs[0].source_metadata || {};
-      const stamp = meta.generated_at ? new Date(meta.generated_at).toLocaleDateString() : "unknown";
-      setStatus(providers.length + " providers bundled (export " + stamp + ")");
-    } else {
-      const enabledIds = Loader.getEnabledPackIds();
-      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
-      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
-    }
-  } catch (_) {}
+  // Refresh provider counts and freshness for the newly enabled pack set.
+  await refreshManifestStatus();
 }
 
 // ── UI event listeners ────────────────────────────────────────────────────────
@@ -1448,6 +1507,7 @@ function attachUIListeners() {
         allBtn.classList.toggle("active", state.activeFilters.size === ALL_STATUSES.length);
       }
     }
+    persistPanelPreferences();
     rerender();
   });
 
@@ -1455,6 +1515,7 @@ function attachUIListeners() {
   btnAutoscroll.addEventListener("click", () => {
     state.autoscroll = !state.autoscroll;
     btnAutoscroll.classList.toggle("active", state.autoscroll);
+    persistPanelPreferences();
   });
 
   // Sort mode
@@ -1462,6 +1523,7 @@ function attachUIListeners() {
     sortSelect.value = state.sortMode;
     sortSelect.addEventListener("change", () => {
       state.sortMode = sortSelect.value;
+      persistPanelPreferences();
       rerender();
     });
   }
@@ -1471,6 +1533,7 @@ function attachUIListeners() {
     btnQfInteresting.addEventListener("click", () => {
       state.quickFilterInteresting = !state.quickFilterInteresting;
       btnQfInteresting.classList.toggle("active", state.quickFilterInteresting);
+      persistPanelPreferences();
       rerender();
     });
   }
@@ -1478,6 +1541,7 @@ function attachUIListeners() {
     btnQfHighRisk.addEventListener("click", () => {
       state.quickFilterHighRisk = !state.quickFilterHighRisk;
       btnQfHighRisk.classList.toggle("active", state.quickFilterHighRisk);
+      persistPanelPreferences();
       rerender();
     });
   }
@@ -1485,6 +1549,7 @@ function attachUIListeners() {
     btnQfProviderKnown.addEventListener("click", () => {
       state.quickFilterProviderKnown = !state.quickFilterProviderKnown;
       btnQfProviderKnown.classList.toggle("active", state.quickFilterProviderKnown);
+      persistPanelPreferences();
       rerender();
     });
   }

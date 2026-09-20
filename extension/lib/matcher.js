@@ -294,6 +294,55 @@
   }
 
   /**
+   * Match opaque identifiers in non-ARM requests against authoritative route
+   * placeholders. Candidate substitutions are bounded and tried from least to
+   * most general; ambiguous matches fail closed.
+   *
+   * @param {string} canonKey
+   * @param {object} canonIndex
+   * @returns {{ routeDef: object, originalKey: string }|null}
+   * @private
+   */
+  function _trySegmentTemplateLookup(canonKey, canonIndex) {
+    const spaceIdx = canonKey.indexOf(" ");
+    if (spaceIdx < 0) return null;
+
+    const method = canonKey.slice(0, spaceIdx);
+    const segments = canonKey.slice(spaceIdx + 1).split("/");
+    const candidates = [];
+    for (let index = 0; index < segments.length; index++) {
+      if (segments[index] && segments[index] !== "{name}") candidates.push(index);
+    }
+
+    if (candidates.length > 20) return null;
+    const maxReplacements = Math.min(4, candidates.length);
+    for (let replacementCount = 1; replacementCount <= maxReplacements; replacementCount++) {
+      const matches = new Map();
+      const selected = [];
+
+      function search(start, remaining) {
+        if (remaining === 0) {
+          const candidateSegments = segments.slice();
+          selected.forEach((index) => { candidateSegments[index] = "{name}"; });
+          const entry = canonIndex[method + " " + candidateSegments.join("/")];
+          if (entry) matches.set(entry.originalKey, entry);
+          return;
+        }
+        for (let index = start; index <= candidates.length - remaining; index++) {
+          selected.push(candidates[index]);
+          search(index + 1, remaining - 1);
+          selected.pop();
+        }
+      }
+
+      search(0, replacementCount);
+      if (matches.size === 1) return matches.values().next().value;
+      if (matches.size > 1) return null;
+    }
+    return null;
+  }
+
+  /**
    * Build a path → available-methods index for all routes in a shard host.
    *
    * The index enables a last-resort "method not in spec" check: when a request
@@ -975,7 +1024,7 @@
   /**
    * Attempt to match a normalised request against a loaded shard.
    *
-   * Strategy (v6 — ARM-aware with name-literal fallback):
+   * Strategy (v7 — ARM-aware with bounded non-ARM templates):
    *   1. Build candidate route keys from norm.armPath (ARM-templated) and
    *      norm.normalisedPath (generic-normalised), in that priority order.
    *   2. Try each candidate in order; use the first matching route key.
@@ -989,7 +1038,10 @@
    *      offsets after /providers/{Namespace}) to `{name}` on the shard side.
    *      Handles shard routes that keep literals at name positions (actions,
    *      singletons, config endpoints) that the ARM normaliser replaced.
-   *   7. Scope-based suffix fallback: many Azure specs define routes using a
+   *   7. Non-ARM template fallback: boundedly replace opaque request segments
+   *      with `{name}` and accept only a unique least-general authoritative
+   *      route match.
+   *   8. Scope-based suffix fallback: many Azure specs define routes using a
    *      variable-length ARM scope placeholder (`{scope}`, `{resourceUri}`,
    *      `{resourceScope}`, …) as the first path segment.  The ARM normaliser
    *      emits the full concrete scope prefix, which never matches
@@ -997,10 +1049,10 @@
    *      the `/providers/Namespace/rest` suffix anchored on the shard's own
    *      provider namespace, handling both exact-method and
    *      `http_method_not_in_spec` cases.
-   *   8. HTTP method not-in-spec fallback (non-scope routes): if the canonical
+   *   9. HTTP method not-in-spec fallback (non-scope routes): if the canonical
    *      path IS present in the shard under a different method (e.g. `OPTIONS`
    *      to a `POST`-only route), return reason="http_method_not_in_spec".
-   *   9. If no key matches, report provider_known_route_unknown.
+   *  10. If no key matches, report provider_known_route_unknown.
    *
    * Trying norm.armPath first reduces false "provider_known_route_unknown"
    * results caused by literal Azure resource names (vault names, site names,
@@ -1114,6 +1166,17 @@
         const nameNormEntry = nameNormIndex[canonKey];
         if (nameNormEntry) {
           return _resolveRouteMatch(nameNormEntry.routeDef, nameNormEntry.originalKey, providerNamespace, norm.apiVersion);
+        }
+      }
+
+      // Generic non-ARM template fallback. Some APIs use opaque identifiers
+      // that cannot be inferred safely from shape alone. Try bounded segment
+      // substitutions against authoritative placeholders and fail closed when
+      // more than one route is equally specific.
+      if (norm.host !== "management.azure.com") {
+        const templateEntry = _trySegmentTemplateLookup(canonKey, canonIndex);
+        if (templateEntry) {
+          return _resolveRouteMatch(templateEntry.routeDef, templateEntry.originalKey, providerNamespace, norm.apiVersion);
         }
       }
 

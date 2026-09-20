@@ -174,12 +174,24 @@ button:hover {
   color: var(--text-dim);
 }
 
+.freshness-badge,
 .count-badge {
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: 10px;
   padding: 1px 7px;
   font-size: 11px;
+  white-space: nowrap;
+}
+
+.freshness-badge { color: var(--text-dim); }
+.freshness-fresh { color: #4ade80; border-color: #166534; }
+.freshness-stale,
+.freshness-future { color: #fb923c; border-color: #9a3412; }
+.freshness-partial,
+.freshness-unknown { color: #facc15; border-color: #854d0e; }
+
+.count-badge {
   color: var(--accent);
 }
 

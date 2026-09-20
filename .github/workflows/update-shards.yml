@@ -30,7 +30,7 @@ on:
       merge:
         description: 'Merge into existing manifest instead of replacing it (true/false)'
         required: false
-        default: 'false'
+        default: 'true'
 
 jobs:
   update-shards:
@@ -56,22 +56,21 @@ jobs:
           mkdir -p inventory
           gh release download shards-latest \
             --repo UndREST-Labs/UndREST-SpecQL \
-            --pattern "api-index-sharded-*.zip" \
+            --pattern "api-index-sharded.zip" \
             --dir inventory/ \
             --clobber
-          # Extract the zip so prepare_data.py finds inventory/shards/
-          ZIP=$(ls inventory/api-index-sharded-*.zip | head -1)
-          unzip -o "$ZIP" -d inventory/
+          # Extract the stable release asset so prepare_data.py finds inventory/shards/
+          unzip -o inventory/api-index-sharded.zip -d inventory/
         env:
           GH_TOKEN: ${{ secrets.SPEQL_READ_TOKEN }}
 
       - name: Prepare extension shard data
         run: |
-          PACK_ID="${{ github.event.inputs.pack_id || 'azure-rest-api-specs' }}"
-          PACK_NAME="${{ github.event.inputs.pack_name || 'Azure REST API Specs' }}"
-          PLATFORM="${{ github.event.inputs.platform || 'azure' }}"
+          PACK_ID="${{ github.event.client_payload.pack_id || github.event.inputs.pack_id || 'azure-rest-api-specs' }}"
+          PACK_NAME="${{ github.event.client_payload.pack_name || github.event.inputs.pack_name || 'Azure REST API Specs' }}"
+          PLATFORM="${{ github.event.client_payload.platform || github.event.inputs.platform || 'azure' }}"
           MERGE_FLAG=""
-          if [ "${{ github.event.inputs.merge }}" = "true" ]; then
+          if [ "${{ github.event_name }}" = "repository_dispatch" ] || [ "${{ github.event.inputs.merge }}" = "true" ]; then
             MERGE_FLAG="--merge"
           fi
           python3 scripts/prepare_data.py \

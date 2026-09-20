@@ -7,9 +7,8 @@ stop and escalate before proceeding.
 
 ## Goal
 
-Prepare bounded Microsoft Graph request capture and normalisation for a future
-authoritative SpecQL pack without fabricating Graph routes or modifying generated
-pack data.
+Bundle the validated, authoritative Microsoft Graph SpecQL export as an offline
+APISpy pack and verify Graph request classification without runtime fetching.
 
 ## Contract status
 
@@ -20,12 +19,13 @@ active
 - Do not add an autonomous request or exploitation engine.
 - Do not allow model output to trigger browser or network actions.
 - Do not add a real external model provider or runtime network dependency.
-- Do not regenerate or hand-edit shards, manifests, provider-op data, or demos.
+- Do not hand-edit generated shards or manifest entries; use `scripts/prepare_data.py`.
+- Do not alter workflow triggers, permissions, or remote source selection.
 - Do not redesign the existing matcher, loader, normaliser, or pack architecture.
 - Do not add npm or Python dependencies.
 - Do not add Microsoft Graph special-casing inside ARM structural normalisation.
-- Do not add Graph shards, route metadata, runtime fetches, or speculative route
-  templates.
+- Do not add runtime fetches, speculative routes, or metadata not present in the
+  pinned authoritative SpecQL export.
 
 ## Carry-forward rules
 
@@ -39,33 +39,31 @@ active
 
 ## Approved scope
 
-- Register a built-in Microsoft Graph normaliser through
-  `Normalizer.registerPackNormaliser`.
-- Match only explicitly supported Graph hosts and schemes.
-- Preserve `/v1.0` and `/beta` in normalised paths while exposing the path
-  version through the existing `apiVersion` field.
-- Template only conservative identifier shapes; preserve query parameter names
-  and the existing normalised-request object shape.
-- Keep Azure ARM normalisation and matching behaviour unchanged.
-- Add a small generic loader fallback that selects a shard by exact request host
-  only when exactly one enabled shard advertises that host.
-- Capture supported Graph requests safely as no-spec matches while no Graph shard
-  is bundled.
-- Add focused plain-Node tests and update pack/readiness documentation.
+- Amend this contract before generated-data changes.
+- Run `scripts/prepare_data.py --merge` against the validated local Graph export.
+- Add one `microsoft-graph` pack containing the generated `Microsoft.Graph` shard.
+- Preserve the pinned source repository, branch, commit, schema, host, route, and
+  version metadata emitted by SpecQL.
+- Keep all data local and lazily loaded through the existing exact-host fallback.
+- Make automated Azure shard refreshes merge-safe so they replace the Azure pack
+  without deleting the bundled Graph pack.
+- Add focused tests for manifest registration, pack selection, Graph host lookup,
+  v1.0 and beta route classification, preview stability, and OData metadata.
+- Update pack documentation and durable cARL memory.
 
 ## Intentional amendments
 
-- Supersedes the completed phase-three session-correlation contract for this
-  bounded Microsoft Graph pack-readiness phase.
-- The only supported Graph host in this phase is the global endpoint
-  `graph.microsoft.com`; sovereign hosts require separately verified coverage.
-- A host-only shard fallback is deliberately fail-closed when zero or multiple
-  enabled shards advertise the same host.
+- Supersedes the completed panel-preference phase.
+- User approval authorises bundling the validated candidate generated from
+  `microsoftgraph/msgraph-metadata` commit
+  `b8cbef92f6959dca8150bf3edcc650863765e529`.
+- The generated shard is intentionally large because bounded operation, schema,
+  parameter, and version-lineage metadata powers APISpy research features.
 
 ## Forbidden scope
 
-- Modifying generated content under `extension/data/` or `demos/`.
-- Modifying workflows or adding dependencies.
+- Hand-editing generated content under `extension/data/` or modifying `demos/`.
+- Modifying workflow triggers, permissions, or remote source selection; adding dependencies.
 - Fabricating Microsoft Graph route, operation, version, auth, or schema metadata.
 - Sending captured data to external services.
 - Persisting or exporting bearer tokens, cookies, SAS signatures, API keys,
@@ -80,7 +78,7 @@ active
 - Model input contains structured, bounded context rather than raw browser traffic.
 - Model output is untrusted, schema-validated, bounded, provenance-tagged, and advisory.
 - AI is disabled by default and provider failure degrades safely.
-- Future Microsoft API packs use existing pack, loader, matcher, and normaliser
+- Microsoft API packs use existing pack, loader, matcher, and normaliser
   extension points.
 - Real Graph route classification requires an authoritative generated SpecQL
   export bundled as an enabled local pack.
@@ -98,21 +96,15 @@ active
 
 - `.github/carl/current-pr-contract.md`
 - `.github/carl/memory.md`
-- `extension/lib/normalizer.js`
-- `extension/lib/filters.js`
-- `extension/lib/loader.js`
-- `extension/lib/request-pipeline.js`
-- `extension/panel.js`
-- `extension/devtools.js`
-- `extension/panel.html`
-- `extension/devtools.html`
-- `tests/test_normalizer.js`
-- `tests/test_filters.js`
+- `.github/carl/plans/microsoft-graph-pack-integration.md`
+- `extension/data/manifest.json`
+- `extension/data/shards/microsoft-graph/Microsoft.Graph.min.json`
 - `tests/test_loader.js`
 - `tests/test_matcher.js`
-- `tests/test_capture_pipeline.js`
-- `package.json`
-- `docs/ADDING_A_PACK.md`
+- `tests/test_prepare_data.py`
+- `.github/workflows/update-shards.yml`
+- `.github/workflows/node-tests.yml`
+- `scripts/prepare_data.py`
 - `README.md`
 - `extension/README.md`
 
@@ -120,40 +112,33 @@ active
 
 ```bash
 npm test
-node --check extension/lib/matcher.js
-node --check extension/lib/normalizer.js
-node --check extension/lib/filters.js
+python3 -m pytest tests/test_prepare_data.py -v
 node --check extension/lib/loader.js
-node --check extension/lib/request-pipeline.js
-node --check extension/panel.js
-node --check extension/devtools.js
+node --check extension/lib/matcher.js
 git diff --check
-git diff --stat HEAD -- extension/data/ demos/
 git status --short
 carl doctor
 ```
 
-Focused tests must cover Graph `v1.0` and `beta`, exact supported-host matching,
-lookalike-host rejection, conservative identifier templating, scheme bounds,
-unchanged Azure behaviour, generic future-pack host lookup, ambiguity rejection,
-and safe no-shard classification.
+Focused tests must cover the generated Graph pack manifest and shard, exact-host
+selection, v1.0 stable and beta preview matches, OData parameter preservation,
+and regeneration through `prepare_data.py --merge`.
 
 ## Stop conditions
 
-- Existing classification tests regress.
-- The implementation requires generated-data, workflow, or dependency changes.
-- Graph matching admits non-HTTPS traffic or non-allowlisted hosts.
-- Graph route metadata must be invented to complete the phase.
+- Existing loader, matcher, panel, or research tests regress.
+- The generated source metadata does not match the approved pinned commit.
+- Graph routes require runtime network access or fabricated metadata.
+- Generated output modifies the Azure pack or demos unexpectedly.
+- The shard cannot be loaded and matched within the existing pack architecture.
 
 ## Escalation triggers
 
-- A sovereign Graph hostname is requested without an authoritative repository
-  source or separately verified documentation.
-- A future Graph export requires ambiguous multi-shard host routing not expressed
-  by the current manifest.
+- The generated Graph shard must be partitioned or structurally transformed.
+- Integration requires extension permissions, remote storage, or runtime updates.
 
 ## Context reset notes
 
-This contract covers request-side Graph readiness only. The repository still
-contains no authoritative Graph pack, performs no runtime fetch, and must report
-Graph requests as unclassified until generated SpecQL data is bundled.
+This contract covers deterministic bundling of the validated Microsoft Graph
+candidate only. Generated data must come through `prepare_data.py`; runtime
+matching continues through the existing pack loader and remains offline.
