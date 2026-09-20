@@ -581,6 +581,24 @@
     return index;
   }
 
+  function _operationMetadata(routeDef, apiVersion) {
+    const versions = routeDef.versions || {};
+    const selected = apiVersion && versions[apiVersion]
+      ? [versions[apiVersion]]
+      : Object.keys(versions).sort().map((version) => versions[version]);
+    const collect = (field) => Array.from(new Set(selected.flatMap((item) =>
+      item && Array.isArray(item[field]) ? item[field] : []
+    ))).sort();
+    return {
+      method: routeDef.method || null,
+      path_template: routeDef.path_template || null,
+      plane: routeDef.plane || null,
+      operation_ids: collect("operation_ids"),
+      spec_files: collect("spec_files"),
+      source_kinds: collect("source_kinds"),
+    };
+  }
+
   /**
    * Resolve a match result for a found route entry against the request's
    * api-version.
@@ -605,6 +623,7 @@
         matched_versions:    versions,
         reason:              "no_api_version_in_request",
         shard_name:          providerNamespace,
+        operation_metadata:  _operationMetadata(routeDef, null),
       });
     }
 
@@ -616,6 +635,7 @@
         matched_version:     apiVersion,
         shard_name:          providerNamespace,
         reason:              "exact",
+        operation_metadata:  _operationMetadata(routeDef, apiVersion),
       });
     }
 
@@ -625,6 +645,7 @@
       matched_versions:    versions,
       reason:              "api_version_not_in_spec",
       shard_name:          providerNamespace,
+      operation_metadata:  _operationMetadata(routeDef, null),
     });
   }
 
@@ -1156,6 +1177,7 @@
         matched_version:    null,
         available_methods:  null,
         shard_name:         null,
+        operation_metadata: null,
         reason:             null,
         error:              null,
       },

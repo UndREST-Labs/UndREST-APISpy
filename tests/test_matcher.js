@@ -51,9 +51,10 @@ const MOCK_SHARD = {
           method: "GET",
           path_template: "/subscriptions/{subscriptionId}/providers/Microsoft.FakeProvider/operations",
           provider_namespace: "Microsoft.FakeProvider",
+          plane: "management",
           versions: {
-            "2024-01-01": { is_preview: false, spec_files: ["fake/2024-01-01/fake.json"] },
-            "2023-01-01": { is_preview: false, spec_files: ["fake/2023-01-01/fake.json"] },
+            "2024-01-01": { is_preview: false, spec_files: ["fake/2024-01-01/fake.json"], operation_ids: ["Operations_List"], source_kinds: ["paths"] },
+            "2023-01-01": { is_preview: false, spec_files: ["fake/2023-01-01/fake.json"], operation_ids: ["Operations_ListLegacy"], source_kinds: ["paths"] },
           },
         },
       },
@@ -125,6 +126,8 @@ console.log("\n=== Matcher.classify — exact match ===");
   eq(r.provider_namespace, "Microsoft.FakeProvider", "correct provider_namespace");
   eq(r.matched_version, "2024-01-01", "correct matched_version");
   assert(Array.isArray(r.matched_versions), "matched_versions is array");
+  eq(r.operation_metadata.plane, "management", "operation plane returned additively");
+  assert(r.operation_metadata.operation_ids.includes("Operations_List"), "matched operation ID returned");
 }
 
 console.log("\n=== Matcher.classify — route match, version mismatch ===");

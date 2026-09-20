@@ -1,15 +1,18 @@
-<!-- version: 1.1.0 -->
+<!-- version: 2.0.0 -->
 # Current PR Contract
 
-This contract constrains implementation scope for the active PR. Update
-it when scope is explicitly amended. If a requested action falls outside
-approved scope, stop and escalate before proceeding.
+This contract constrains implementation scope for the active PR. Update it when
+scope is explicitly amended. If a requested action falls outside approved scope,
+stop and escalate before proceeding.
 
 ## Goal
 
-Harden generated artefact boundaries so shard data, pack manifest, provider-op
-enrichment data, and demo screenshots are clearly pipeline-owned and not
-hand-edited.
+Add the first reviewable AI-assisted research vertical slice to APISpy while
+preserving existing classification, pack, sweep, and offline behaviour:
+
+```text
+capture -> sanitise -> enrich -> deterministic finding -> advisory hypothesis -> export
+```
 
 ## Contract status
 
@@ -17,89 +20,98 @@ active
 
 ## Non-goals
 
-- No extension runtime behaviour changes.
-- No shard data regeneration.
-- No modification of generated shard contents.
-- No workflow logic changes.
-- No dependency changes.
+- Do not add an autonomous request or exploitation engine.
+- Do not allow model output to trigger browser or network actions.
+- Do not add a real external model provider or runtime network dependency.
+- Do not regenerate or hand-edit shards, manifests, provider-op data, or demos.
+- Do not redesign the existing matcher, loader, normaliser, or pack architecture.
+- Do not add npm or Python dependencies.
 
 ## Carry-forward rules
 
-The following durable invariants remain unchanged:
-- Generated shard files and `extension/data/manifest.json` are pipeline-owned and must not be hand-edited.
-- JS tests must pass with plain `node` — no browser, no Azure auth.
-- The extension must remain offline-capable with no runtime network dependencies.
-- `SPEQL_READ_TOKEN` must never be logged, echoed, or committed.
-- cARL artefacts in `.github/carl/` remain the canonical governance authority.
+- Generated data remains pipeline-owned and must not be hand-edited.
+- JavaScript tests remain runnable with plain Node and no browser or Azure auth.
+- The extension remains offline-capable with no runtime network dependency.
+- Existing request classification and filtering continue to work with research/AI disabled.
+- APISpy observes traffic but never authenticates or issues API requests.
+- cARL artefacts remain canonical governance authority.
 
 ## Approved scope
 
-- Review and update `.gitignore` to cover local/transient generated artefacts where appropriate.
-- Clarify generated-but-committed ownership for:
-  - `extension/data/shards/`
-  - `extension/data/manifest.json`
-  - `extension/data/azure-provider-ops.json`
-  - `demos/apispy-*.png`
-- Update `CONTRIBUTING.md` only as needed to reinforce "do not hand-edit generated data".
-- Update `README.md` if needed to clarify generated artefact ownership boundaries.
-- Update `.github/carl/memory.md` only if durable ownership or validation expectations change.
-- Run `npm test` and verify no shard/manifest/demo churn.
+- Add browser-compatible modules for research events, sanitisation, JWT metadata extraction, deterministic differential findings, bounded test plans, and provider-neutral hypothesis generation.
+- Add a deterministic mock/local hypothesis provider and strict output validation.
+- Integrate sanitised research events into interactive capture and portal-sweep capture.
+- Add explicit opt-in AI controls and JSON research-session export without changing existing CSV semantics.
+- Add a non-noisy Research section to request details.
+- Add focused plain-Node tests and directly related architecture/trust-boundary documentation.
+- Add optional matcher result metadata sourced from existing shard fields without changing route identity or generated shard schemas.
 
 ## Intentional amendments
 
-- Supersedes the previous contract focused on introducing repo-level `npm test` CI wiring.
-- Restricts this task to artefact-boundary hardening in docs/governance/ignore rules only.
+- Supersedes the previous generated-artefact-boundary task after the user explicitly requested and approved implementation of the research vertical slice.
+- Preserves all prior generated-artefact ownership and offline-operation invariants.
 
 ## Forbidden scope
 
-- Modifying extension runtime/source logic (except documentation comments if explicitly justified).
-- Modifying `extension/data/shards/`, `extension/data/manifest.json`, or regenerating shard data.
-- Modifying existing workflows.
-- Adding npm or Python dependencies.
-- Running scripts that require Azure auth or mutate generated data.
+- Modifying generated content under `extension/data/` or `demos/`.
+- Modifying workflows or adding dependencies.
+- Sending captured data to external services.
+- Persisting or exporting bearer tokens, cookies, SAS signatures, API keys, client secrets, auth codes, refresh tokens, or raw request/response bodies.
+- Model-controlled tools, HTTP requests, approval bypasses, or target discovery.
 
 ## Architectural constraints
 
-- Preserve extension runtime behaviour and offline operation.
-- Treat shard data, manifest, enrichment dataset, and demos as generated artefacts with explicit ownership boundaries.
-- Keep updates focused on docs/governance/ignore behaviour.
+- Models advise; deterministic controls execute.
+- Sanitisation occurs before persistence, export, or provider submission.
+- Model input contains structured, bounded context rather than raw browser traffic.
+- Model output is untrusted, schema-validated, bounded, provenance-tagged, and advisory.
+- AI is disabled by default and provider failure degrades safely.
+- New research schemas are versioned separately from existing pack/shard schemas.
+- Future Microsoft API packs use existing pack and normaliser extension points.
 
 ## Security constraints
 
-- No secrets, credentials, or tokens committed.
-- Do not relax existing security boundaries or governance controls.
+- Hostile observed fields are data, never instructions.
+- Prompt-injection-like content must remain delimited and cannot alter policy.
+- JWT decoding is local and limited to non-secret claims metadata.
+- No raw credentials may appear in research persistence, export, provider input, tests, or logs.
+- Research exports must state redaction status and provenance.
 
 ## Files expected to change
 
 - `.github/carl/current-pr-contract.md`
-- `.gitignore`
-- `CONTRIBUTING.md`
-- `README.md` (if clarification needed)
-- `.github/carl/memory.md` (only if durable truth changes)
+- `extension/lib/research.js`
+- `extension/lib/matcher.js` (optional additive metadata only)
+- `extension/panel.html`, `extension/panel.js`, `extension/devtools.html`, `extension/devtools.js`
+- `extension/panel.css` only if minimal controls require styling
+- `tests/test_research.js`, `package.json`
+- `extension/README.md` and/or `docs/RESEARCH_ARCHITECTURE.md`
 
 ## Tests / validation
 
 ```bash
 npm test
-git diff --stat HEAD -- extension/data/shards/
-git diff --stat HEAD -- extension/data/manifest.json
-git diff --stat HEAD -- demos/apispy-*.png
+git diff --check
+git diff --stat HEAD -- extension/data/ demos/
 git status --short
 ```
 
+Focused tests must cover redaction, JWT metadata, event construction, deterministic findings, test plans, injection-like content, malformed/provider-failure responses, AI-disabled behaviour, and export credential absence.
+
 ## Stop conditions
 
-- If `npm test` fails, stop and investigate before proceeding.
-- If shard, manifest, enrichment data, or demos change unexpectedly, stop and explain.
-- If requested changes require runtime code/workflow/dependency changes, stop and escalate.
+- Any raw credential reaches provider input, persistence, or research export.
+- Existing classification tests regress.
+- The implementation requires generated-data, workflow, or dependency changes.
+- Model output can trigger a network action.
 
 ## Escalation triggers
 
-- Any need to change extension runtime code or generated artefact contents.
-- Any need to add dependencies or modify workflows.
-- Any ambiguity about generated-but-committed ownership policy.
+- A real external model integration is requested.
+- SpecQL export schema changes become required for the first slice.
+- A future executor or active test runner is requested.
 
 ## Context reset notes
 
-This task hardens artefact ownership boundaries only. It must not alter runtime
-behaviour or generated data contents.
+This contract covers only the first APISpy research vertical slice. SpecQL
+schema enrichment and real model providers remain later phases.

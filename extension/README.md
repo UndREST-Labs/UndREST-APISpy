@@ -80,6 +80,30 @@ To add a new pack, see **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)**.
 
 ---
 
+## Research mode and trust boundaries
+
+APISpy has an optional, opt-in research layer that enriches a request with deterministic metadata before an AI model sees it. The extension does not send raw bearer tokens, cookies, refresh tokens, SAS signatures, API keys, or client secrets to any external model. A request is sanitised first, the JWT payload is locally decoded only for non-secret metadata (issuer, tenant ID, app/client ID, audience, delegated vs application context, scopes/roles), and the output is kept in a machine-readable research event.
+
+The model is advisory only. It does not directly trigger network actions and is never allowed to control the browser or issue HTTP requests. APISpy can run fully offline with AI disabled, and exported research sessions keep redaction provenance alongside the findings and generated hypotheses.
+
+A minimal research event contains:
+
+- timestamp / correlation ID
+- method + hostname + normalised path + original path
+- sanitised query parameters
+- SpecQL classification state (exact, version mismatch, provider known, portal-only candidate, unknown)
+- deterministic differential findings
+- model-generated hypotheses in a strict machine-readable schema
+- provenance and redaction status
+
+Use **AI: Off / AI: Local** to control hypothesis generation and **Save Research** to export sanitised JSON. Generated test plans are descriptions only and always carry `requires_manual_approval: true` plus `execution: "not_supported"`.
+
+See [`docs/RESEARCH_ARCHITECTURE.md`](../docs/RESEARCH_ARCHITECTURE.md) for the event schema, data flow, component ownership, and phased roadmap.
+
+This keeps the system aligned with the principle: **models advise, deterministic controls execute**.
+
+---
+
 ## Automated Azure Portal Sweep
 
 `scripts/azure_portal_sweep.py` automates a full Azure Portal sweep using
