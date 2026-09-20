@@ -40,6 +40,7 @@ apispy/
 │   │   ├── loader.js           ← Pack-aware shard loader (v1.0.0/v2.0.0 manifest, user pack selection)
 │   │   ├── matcher.js          ← Classifies requests against the index
 │   │   ├── request-pipeline.js ← Shared panel/sweep shard resolution and retention
+│   │   ├── panel-preferences.js ← Validated local toolbar-view preferences
 │   │   └── azure-enrichment.js ← Azure provider-operation enrichment (optional; gracefully absent)
 │   ├── data/
 │   │   ├── manifest.json          ← Pack manifest (schema 2.0.0): lists packs + their shards + source metadata
@@ -406,13 +407,19 @@ combined bundle. A seven-day threshold marks stale data, and partial, missing,
 malformed, or future-dated metadata is surfaced explicitly. The badge is
 informational only: APISpy does not fetch or update artifacts at runtime.
 
+### Panel preferences
+
+Status filters, sort mode, quick-filter toggles, and autoscroll persist in
+extension-local browser storage. APISpy validates the versioned preference
+object and falls back to defaults when storage is missing, malformed, or
+unavailable. Column-value filters remain session-only.
+
 ---
 
 ## Future planned enhancements
 
 1. **Remote artifact updates** — pull latest shards from GitHub Pages / artifact store.
 2. **Graph API pack** — bundle an authoritative generated Microsoft Graph SpecQL export.
-3. **Filter persistence** — remember the last-used filter across panel opens.
 
 ---
 

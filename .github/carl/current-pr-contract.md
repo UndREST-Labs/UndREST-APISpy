@@ -7,9 +7,8 @@ stop and escalate before proceeding.
 
 ## Goal
 
-Display the freshness of enabled bundled API-pack exports in the DevTools panel,
-including explicit stale, partial, future-dated, and unknown states, without
-modifying generated pack data.
+Persist bounded APISpy panel view preferences across DevTools panel reloads while
+validating browser storage and preserving safe defaults.
 
 ## Contract status
 
@@ -39,24 +38,21 @@ active
 
 ## Approved scope
 
-- Derive a conservative freshness summary from `source_metadata.generated_at`
-  across enabled packs.
-- Treat the oldest enabled-pack export as the bundle freshness timestamp.
-- Mark exports stale after seven days, reflecting the documented nightly update
-  cadence while allowing for transient workflow delays.
-- Distinguish complete, partial, unknown, and future-dated timestamp metadata.
-- Show freshness in a dedicated, accessible panel status badge that survives
-  transient request-status messages and refreshes after pack selection changes.
+- Persist active status filters, sort mode, quick-filter toggles, and autoscroll.
+- Store a small versioned JSON preference object in browser local storage.
+- Validate every restored field against explicit allowlists and boolean types.
+- Fall back to existing defaults when storage is absent, malformed, inaccessible,
+  or contains unsupported values.
+- Synchronise restored state to toolbar controls before request rendering.
 - Add focused plain-Node tests and update user-facing documentation.
 
 ## Intentional amendments
 
-- Supersedes the completed Microsoft Graph pack-readiness contract for this
-  bounded export-freshness phase.
-- Microsoft Graph readiness remains unchanged and no authoritative Graph pack is
-  introduced.
-- Seven days is the explicit stale threshold; timestamps more than one day ahead
-  of the browser clock are reported as future-dated rather than fresh.
+- Supersedes the completed export-freshness contract for this bounded panel
+  preference persistence phase.
+- Column-value filters are intentionally session-only because their available
+  values depend on currently observed traffic.
+- Existing API-pack selection and AI opt-in storage remain independent.
 
 ## Forbidden scope
 
@@ -94,11 +90,11 @@ active
 
 - `.github/carl/current-pr-contract.md`
 - `.github/carl/memory.md`
-- `extension/lib/loader.js`
+- `extension/lib/panel-preferences.js`
 - `extension/panel.js`
 - `extension/panel.html`
-- `extension/panel.css`
-- `tests/test_loader.js`
+- `tests/test_panel_preferences.js`
+- `package.json`
 - `README.md`
 - `extension/README.md`
 
@@ -106,7 +102,7 @@ active
 
 ```bash
 npm test
-node --check extension/lib/loader.js
+node --check extension/lib/panel-preferences.js
 node --check extension/panel.js
 git diff --check
 git diff --stat HEAD -- extension/data/ demos/
@@ -114,24 +110,25 @@ git status --short
 carl doctor
 ```
 
-Focused tests must cover fresh, stale, partial, unknown, and future-dated
-metadata; oldest-enabled-pack selection; disabled-pack exclusion; and stable
-handling of invalid timestamps.
+Focused tests must cover defaults, valid round-trips, unknown statuses and sort
+modes, malformed JSON, unavailable storage, write failures, and empty status
+selection.
 
 ## Stop conditions
 
-- Existing loader or classification tests regress.
+- Existing panel, loader, or classification tests regress.
 - The implementation requires generated-data, workflow, or dependency changes.
-- Freshness calculation requires a runtime network request.
-- Missing or malformed timestamps are presented as current.
+- Restored values bypass explicit validation.
+- Persistence includes captured requests, column values, credentials, or research
+  data.
 
 ## Escalation triggers
 
-- Changing the shard update cadence or workflow is required.
-- A product requirement calls for remote artifact fetching or automatic updates.
+- Synchronising preferences across devices or accounts is requested.
+- Persistence requires extension permissions or remote storage.
 
 ## Context reset notes
 
-This contract covers display-only export freshness. It does not update pack
-artifacts, alter pack selection, fetch remote metadata, or change request
-classification.
+This contract covers local display preferences only. It does not persist captured
+traffic or column-value filters and does not alter request classification, pack
+selection, AI consent, export freshness, or research safety boundaries.

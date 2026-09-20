@@ -113,6 +113,13 @@ determines combined freshness. Exports older than seven days are marked stale;
 missing, malformed, partial, or future-dated metadata is reported explicitly.
 This is display-only and never triggers a runtime fetch or artifact update.
 
+### Panel preferences
+
+APISpy remembers status filters, sort mode, quick-filter toggles, and autoscroll
+in extension-local browser storage. Stored values are versioned and validated on
+load; malformed or unsupported values fall back to safe defaults. Column-value
+filters remain session-only because their values depend on observed traffic.
+
 ### Selecting active packs
 
 Click the **Packs** button in the APISpy toolbar to open the pack settings dialog.  From there you can enable or disable individual packs.  Your selection is saved to browser storage and persists across DevTools reloads.
