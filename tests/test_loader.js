@@ -323,6 +323,71 @@ console.log("\n=== Loader: v1.0.0 manifest auto-upgrade ===");
   assert(meta.generated_at === "2026-03-21T22:51:41Z", "getSourceMetadata returns first pack metadata");
   assert(meta.source_repo === "Azure/azure-rest-api-specs",  "source_repo preserved");
 
+  // ── Tests: export freshness ─────────────────────────────────────────────────
+
+  console.log("\n=== Loader export freshness ===");
+  const reference = "2026-03-25T00:00:00Z";
+
+  const fresh = Loader.summariseExportFreshness([
+    { source_metadata: { generated_at: "2026-03-21T22:51:41Z" } },
+  ], reference);
+  assert(fresh.state === "fresh", "recent export is current");
+  assert(fresh.age_days === 3, "freshness reports whole elapsed days");
+  assert(fresh.stale_after_days === 7, "freshness exposes the seven-day threshold");
+
+  const stale = Loader.summariseExportFreshness([
+    { source_metadata: { generated_at: "2026-03-10T00:00:00Z" } },
+  ], reference);
+  assert(stale.state === "stale" && stale.is_stale === true, "export older than seven days is stale");
+
+  const justStale = Loader.summariseExportFreshness([
+    { source_metadata: { generated_at: "2026-03-17T23:59:59Z" } },
+  ], reference);
+  assert(justStale.state === "stale", "freshness uses exact elapsed time rather than rounded days");
+
+  const oldest = Loader.summariseExportFreshness([
+    { source_metadata: { generated_at: "2026-03-24T00:00:00Z" } },
+    { source_metadata: { generated_at: "2026-03-01T00:00:00Z" } },
+  ], reference);
+  assert(oldest.generated_at === "2026-03-01T00:00:00Z", "oldest enabled-pack export determines bundle freshness");
+  assert(oldest.state === "stale", "an old enabled pack makes the combined bundle stale");
+
+  const partial = Loader.summariseExportFreshness([
+    { source_metadata: { generated_at: "2026-03-24T00:00:00Z" } },
+    { source_metadata: {} },
+    { source_metadata: { generated_at: "not-a-date" } },
+  ], reference);
+  assert(partial.state === "partial", "missing or malformed timestamps produce a partial state");
+  assert(partial.missing_or_invalid_count === 2, "partial state reports missing and malformed timestamp count");
+
+  const unknown = Loader.summariseExportFreshness([
+    { source_metadata: {} },
+  ], reference);
+  assert(unknown.state === "unknown" && unknown.generated_at === null, "missing timestamps produce an unknown state");
+
+  const future = Loader.summariseExportFreshness([
+    { source_metadata: { generated_at: "2026-03-27T00:00:01Z" } },
+  ], reference);
+  assert(future.state === "future", "timestamp more than one day ahead is reported as future-dated");
+  assert(future.future_timestamp_count === 1, "future-dated timestamp count is reported");
+
+  const selectedManifest = JSON.parse(JSON.stringify(V2_MANIFEST));
+  selectedManifest.packs[1].source_metadata.generated_at = "2026-03-24T00:00:00Z";
+  Loader.setEnabledPackIds(["example-api"]);
+  Loader.resetCache();
+  _injectManifest(selectedManifest);
+  const selectedFreshness = await Loader.getExportFreshness(reference);
+  assert(selectedFreshness.enabled_pack_count === 1, "freshness excludes disabled packs");
+  assert(selectedFreshness.generated_at === "2026-03-24T00:00:00Z", "freshness uses the enabled pack timestamp");
+
+  Loader.setEnabledPackIds([]);
+  Loader.resetCache();
+  _injectManifest(selectedManifest);
+  const emptyFreshness = await Loader.getExportFreshness(reference);
+  assert(emptyFreshness.state === "unknown" && emptyFreshness.enabled_pack_count === 0,
+    "no enabled packs produces an unknown state");
+  Loader.setEnabledPackIds(null);
+
   // ── Summary ────────────────────────────────────────────────────────────────
 
   console.log(`\nLoader: ${pass} passed, ${fail} failed`);

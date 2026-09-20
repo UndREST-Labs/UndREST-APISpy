@@ -285,9 +285,81 @@
     return providers;
   }
 
+  const EXPORT_STALE_AFTER_DAYS = 7;
+  const MS_PER_DAY = 24 * 60 * 60 * 1000;
+
+  /**
+   * Summarise export freshness across a set of packs.
+   * The oldest valid enabled-pack timestamp represents the bundle because every
+   * enabled pack must be current for the combined index to be current.
+   *
+   * @param {Array<object>} packs
+   * @param {number|Date|string} [referenceTime]
+   * @param {number} [staleAfterDays]
+   * @returns {object}
+   */
+  function summariseExportFreshness(packs, referenceTime, staleAfterDays) {
+    const packList = Array.isArray(packs) ? packs : [];
+    const parsedReference = referenceTime instanceof Date
+      ? referenceTime.getTime()
+      : (referenceTime == null ? Date.now() : new Date(referenceTime).getTime());
+    const now = Number.isFinite(parsedReference) ? parsedReference : Date.now();
+    const thresholdDays = Number.isFinite(staleAfterDays) && staleAfterDays >= 0
+      ? staleAfterDays
+      : EXPORT_STALE_AFTER_DAYS;
+    const valid = [];
+    let missingOrInvalidCount = 0;
+    let futureCount = 0;
+
+    for (const pack of packList) {
+      const raw = pack && pack.source_metadata && pack.source_metadata.generated_at;
+      const timestamp = typeof raw === "string" ? Date.parse(raw) : NaN;
+      if (!Number.isFinite(timestamp)) {
+        missingOrInvalidCount++;
+      } else if (timestamp - now > MS_PER_DAY) {
+        futureCount++;
+      } else {
+        valid.push({ generated_at: raw, timestamp });
+      }
+    }
+
+    const oldest = valid.reduce(
+      (candidate, item) => !candidate || item.timestamp < candidate.timestamp ? item : candidate,
+      null
+    );
+    const ageDays = oldest ? Math.max(0, Math.floor((now - oldest.timestamp) / MS_PER_DAY)) : null;
+    const isStale = oldest ? now - oldest.timestamp > thresholdDays * MS_PER_DAY : null;
+    let state = "unknown";
+    if (futureCount > 0) state = "future";
+    else if (oldest && missingOrInvalidCount > 0) state = "partial";
+    else if (oldest) state = isStale ? "stale" : "fresh";
+
+    return {
+      state,
+      generated_at: oldest ? oldest.generated_at : null,
+      age_days: ageDays,
+      is_stale: isStale,
+      stale_after_days: thresholdDays,
+      enabled_pack_count: packList.length,
+      valid_timestamp_count: valid.length,
+      missing_or_invalid_count: missingOrInvalidCount,
+      future_timestamp_count: futureCount,
+    };
+  }
+
+  /**
+   * Return freshness metadata for enabled packs.
+   * @param {number|Date|string} [referenceTime]
+   * @returns {Promise<object>}
+   */
+  async function getExportFreshness(referenceTime) {
+    const manifest = await loadManifest();
+    return summariseExportFreshness(_enabledPacks(manifest), referenceTime);
+  }
+
   /**
    * Return the source metadata from the first enabled pack (or an empty
-   * object).  Kept for backward compatibility with panel.js init().
+   * object).  Kept for backward compatibility.
    * @returns {Promise<object>}
    */
   async function getSourceMetadata() {
@@ -314,6 +386,8 @@
     listBundledPacks,
     listBundledProviders,
     getSourceMetadata,
+    getExportFreshness,
+    summariseExportFreshness,
     findShardEntry,
     findShardEntryForRequest,
     loadShardEntry,

@@ -105,6 +105,14 @@ unclassified and no route metadata is invented. The extension performs no
 runtime fetch; future Graph route classification must come from a checked-in,
 enabled `microsoft-graph` pack.
 
+### Export freshness
+
+The toolbar shows a dedicated export-freshness badge derived from the enabled
+packs' `source_metadata.generated_at` values. The oldest enabled-pack timestamp
+determines combined freshness. Exports older than seven days are marked stale;
+missing, malformed, partial, or future-dated metadata is reported explicitly.
+This is display-only and never triggers a runtime fetch or artifact update.
+
 ### Selecting active packs
 
 Click the **Packs** button in the APISpy toolbar to open the pack settings dialog.  From there you can enable or disable individual packs.  Your selection is saved to browser storage and persists across DevTools reloads.

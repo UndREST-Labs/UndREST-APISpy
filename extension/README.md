@@ -398,14 +398,21 @@ If `azure-provider-ops.json` is absent or fails to load, the enrichment module i
   `graph.microsoft.com` is recognised as in-scope, but the bundled index currently
   covers Azure Resource Manager (`management.azure.com`) exclusively.
 
+### Export freshness
+
+The toolbar displays freshness for the currently enabled packs using their
+`source_metadata.generated_at` values. The oldest enabled export represents the
+combined bundle. A seven-day threshold marks stale data, and partial, missing,
+malformed, or future-dated metadata is surfaced explicitly. The badge is
+informational only: APISpy does not fetch or update artifacts at runtime.
+
 ---
 
 ## Future planned enhancements
 
 1. **Remote artifact updates** — pull latest shards from GitHub Pages / artifact store.
 2. **Graph API pack** — bundle an authoritative generated Microsoft Graph SpecQL export.
-3. **Export timestamp display** — show index freshness in the panel.
-4. **Filter persistence** — remember the last-used filter across panel opens.
+3. **Filter persistence** — remember the last-used filter across panel opens.
 
 ---
 

@@ -7,9 +7,9 @@ stop and escalate before proceeding.
 
 ## Goal
 
-Prepare bounded Microsoft Graph request capture and normalisation for a future
-authoritative SpecQL pack without fabricating Graph routes or modifying generated
-pack data.
+Display the freshness of enabled bundled API-pack exports in the DevTools panel,
+including explicit stale, partial, future-dated, and unknown states, without
+modifying generated pack data.
 
 ## Contract status
 
@@ -39,28 +39,24 @@ active
 
 ## Approved scope
 
-- Register a built-in Microsoft Graph normaliser through
-  `Normalizer.registerPackNormaliser`.
-- Match only explicitly supported Graph hosts and schemes.
-- Preserve `/v1.0` and `/beta` in normalised paths while exposing the path
-  version through the existing `apiVersion` field.
-- Template only conservative identifier shapes; preserve query parameter names
-  and the existing normalised-request object shape.
-- Keep Azure ARM normalisation and matching behaviour unchanged.
-- Add a small generic loader fallback that selects a shard by exact request host
-  only when exactly one enabled shard advertises that host.
-- Capture supported Graph requests safely as no-spec matches while no Graph shard
-  is bundled.
-- Add focused plain-Node tests and update pack/readiness documentation.
+- Derive a conservative freshness summary from `source_metadata.generated_at`
+  across enabled packs.
+- Treat the oldest enabled-pack export as the bundle freshness timestamp.
+- Mark exports stale after seven days, reflecting the documented nightly update
+  cadence while allowing for transient workflow delays.
+- Distinguish complete, partial, unknown, and future-dated timestamp metadata.
+- Show freshness in a dedicated, accessible panel status badge that survives
+  transient request-status messages and refreshes after pack selection changes.
+- Add focused plain-Node tests and update user-facing documentation.
 
 ## Intentional amendments
 
-- Supersedes the completed phase-three session-correlation contract for this
-  bounded Microsoft Graph pack-readiness phase.
-- The only supported Graph host in this phase is the global endpoint
-  `graph.microsoft.com`; sovereign hosts require separately verified coverage.
-- A host-only shard fallback is deliberately fail-closed when zero or multiple
-  enabled shards advertise the same host.
+- Supersedes the completed Microsoft Graph pack-readiness contract for this
+  bounded export-freshness phase.
+- Microsoft Graph readiness remains unchanged and no authoritative Graph pack is
+  introduced.
+- Seven days is the explicit stale threshold; timestamps more than one day ahead
+  of the browser clock are reported as future-dated rather than fresh.
 
 ## Forbidden scope
 
@@ -98,21 +94,11 @@ active
 
 - `.github/carl/current-pr-contract.md`
 - `.github/carl/memory.md`
-- `extension/lib/normalizer.js`
-- `extension/lib/filters.js`
 - `extension/lib/loader.js`
-- `extension/lib/request-pipeline.js`
 - `extension/panel.js`
-- `extension/devtools.js`
 - `extension/panel.html`
-- `extension/devtools.html`
-- `tests/test_normalizer.js`
-- `tests/test_filters.js`
+- `extension/panel.css`
 - `tests/test_loader.js`
-- `tests/test_matcher.js`
-- `tests/test_capture_pipeline.js`
-- `package.json`
-- `docs/ADDING_A_PACK.md`
 - `README.md`
 - `extension/README.md`
 
@@ -120,40 +106,32 @@ active
 
 ```bash
 npm test
-node --check extension/lib/matcher.js
-node --check extension/lib/normalizer.js
-node --check extension/lib/filters.js
 node --check extension/lib/loader.js
-node --check extension/lib/request-pipeline.js
 node --check extension/panel.js
-node --check extension/devtools.js
 git diff --check
 git diff --stat HEAD -- extension/data/ demos/
 git status --short
 carl doctor
 ```
 
-Focused tests must cover Graph `v1.0` and `beta`, exact supported-host matching,
-lookalike-host rejection, conservative identifier templating, scheme bounds,
-unchanged Azure behaviour, generic future-pack host lookup, ambiguity rejection,
-and safe no-shard classification.
+Focused tests must cover fresh, stale, partial, unknown, and future-dated
+metadata; oldest-enabled-pack selection; disabled-pack exclusion; and stable
+handling of invalid timestamps.
 
 ## Stop conditions
 
-- Existing classification tests regress.
+- Existing loader or classification tests regress.
 - The implementation requires generated-data, workflow, or dependency changes.
-- Graph matching admits non-HTTPS traffic or non-allowlisted hosts.
-- Graph route metadata must be invented to complete the phase.
+- Freshness calculation requires a runtime network request.
+- Missing or malformed timestamps are presented as current.
 
 ## Escalation triggers
 
-- A sovereign Graph hostname is requested without an authoritative repository
-  source or separately verified documentation.
-- A future Graph export requires ambiguous multi-shard host routing not expressed
-  by the current manifest.
+- Changing the shard update cadence or workflow is required.
+- A product requirement calls for remote artifact fetching or automatic updates.
 
 ## Context reset notes
 
-This contract covers request-side Graph readiness only. The repository still
-contains no authoritative Graph pack, performs no runtime fetch, and must report
-Graph requests as unclassified until generated SpecQL data is bundled.
+This contract covers display-only export freshness. It does not update pack
+artifacts, alter pack selection, fetch remote metadata, or change request
+classification.

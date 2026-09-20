@@ -96,6 +96,7 @@ const state = {
 
 const tbody          = document.getElementById("request-tbody");
 const statusText     = document.getElementById("status-text");
+const exportFreshness = document.getElementById("export-freshness");
 const requestCount   = document.getElementById("request-count");
 const filterGroup    = document.getElementById("filter-group");
 const btnClear       = document.getElementById("btn-clear");
@@ -128,6 +129,53 @@ const btnQfProviderKnown = document.getElementById("btn-qf-provider-known");
 
 // ── Initialisation ────────────────────────────────────────────────────────────
 
+function setExportFreshness(freshness) {
+  const value = freshness || { state: "unknown" };
+  const stateName = ["fresh", "stale", "partial", "future", "unknown"].includes(value.state)
+    ? value.state
+    : "unknown";
+  const stamp = value.generated_at
+    ? new Date(value.generated_at).toLocaleDateString()
+    : null;
+  const labels = {
+    fresh: "Export current" + (stamp ? " · " + stamp : ""),
+    stale: "Export stale" + (stamp ? " · " + stamp : ""),
+    partial: "Export metadata partial" + (value.is_stale ? " · stale" : "") + (stamp ? " · oldest " + stamp : ""),
+    future: "Export date ahead of clock",
+    unknown: "Export date unknown",
+  };
+
+  exportFreshness.textContent = labels[stateName];
+  exportFreshness.className = "freshness-badge freshness-" + stateName;
+  const details = [];
+  if (value.age_days != null) details.push(value.age_days + " days old");
+  if (value.stale_after_days != null) details.push("stale after " + value.stale_after_days + " days");
+  if (value.missing_or_invalid_count) details.push(value.missing_or_invalid_count + " missing or invalid timestamp(s)");
+  if (value.future_timestamp_count) details.push(value.future_timestamp_count + " future-dated timestamp(s)");
+  exportFreshness.title = details.join("; ") || labels[stateName];
+}
+
+async function refreshManifestStatus() {
+  try {
+    const [packs, providers, freshness] = await Promise.all([
+      Loader.listBundledPacks(),
+      Loader.listBundledProviders(),
+      Loader.getExportFreshness(),
+    ]);
+    if (packs.length === 1) {
+      setStatus(providers.length + " providers bundled");
+    } else {
+      const enabledIds = Loader.getEnabledPackIds();
+      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
+      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
+    }
+    setExportFreshness(freshness);
+  } catch (err) {
+    setStatus("Failed to load data manifest: " + err.message);
+    setExportFreshness({ state: "unknown" });
+  }
+}
+
 async function init() {
   setStatus("Loading index...");
   updateAiButton();
@@ -138,22 +186,7 @@ async function init() {
     AzureEnrichment.load();
   }
 
-  try {
-    const packs     = await Loader.listBundledPacks();
-    const providers = await Loader.listBundledProviders();
-    // Build a status line that mentions pack counts when multiple packs exist.
-    if (packs.length === 1) {
-      const meta  = packs[0].source_metadata || {};
-      const stamp = meta.generated_at ? new Date(meta.generated_at).toLocaleDateString() : "unknown";
-      setStatus(providers.length + " providers bundled (export " + stamp + ")");
-    } else {
-      const enabledIds = Loader.getEnabledPackIds();
-      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
-      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
-    }
-  } catch (err) {
-    setStatus("Failed to load data manifest: " + err.message);
-  }
+  await refreshManifestStatus();
 
   updateTbodyHeight();
 
@@ -1404,20 +1437,8 @@ async function applyPackSelection() {
 
   closePackDialog();
 
-  // Refresh the status bar.
-  try {
-    const packs     = await Loader.listBundledPacks();
-    const providers = await Loader.listBundledProviders();
-    if (packs.length === 1) {
-      const meta  = packs[0].source_metadata || {};
-      const stamp = meta.generated_at ? new Date(meta.generated_at).toLocaleDateString() : "unknown";
-      setStatus(providers.length + " providers bundled (export " + stamp + ")");
-    } else {
-      const enabledIds = Loader.getEnabledPackIds();
-      const enabledCount = enabledIds ? packs.filter((p) => enabledIds.has(p.pack_id)).length : packs.length;
-      setStatus(providers.length + " providers from " + enabledCount + "/" + packs.length + " packs");
-    }
-  } catch (_) {}
+  // Refresh provider counts and freshness for the newly enabled pack set.
+  await refreshManifestStatus();
 }
 
 // ── UI event listeners ────────────────────────────────────────────────────────
