@@ -589,6 +589,29 @@
     const collect = (field) => Array.from(new Set(selected.flatMap((item) =>
       item && Array.isArray(item[field]) ? item[field] : []
     ))).sort();
+    const collectObjects = (field, limit) => {
+      const keyed = new Map();
+      selected.forEach((item) => {
+        const values = item && Array.isArray(item[field]) ? item[field] : [];
+        values.forEach((value) => {
+          if (!value || typeof value !== "object") return;
+          const key = JSON.stringify(value);
+          if (!keyed.has(key)) keyed.set(key, value);
+        });
+      });
+      return Array.from(keyed.keys()).sort().slice(0, limit).map((key) => keyed.get(key));
+    };
+    const parameters = {};
+    selected.forEach((item) => {
+      const source = item && item.parameters && typeof item.parameters === "object" ? item.parameters : {};
+      Object.keys(source).sort().forEach((location) => {
+        if (!Array.isArray(source[location])) return;
+        parameters[location] = Array.from(new Set((parameters[location] || []).concat(source[location]))).sort().slice(0, 100);
+      });
+    });
+    const authStatuses = Array.from(new Set(selected.map((item) =>
+      item && item.auth && typeof item.auth.status === "string" ? item.auth.status : "unspecified"
+    ).filter((status) => status !== "unspecified"))).sort();
     return {
       method: routeDef.method || null,
       path_template: routeDef.path_template || null,
@@ -596,6 +619,18 @@
       operation_ids: collect("operation_ids"),
       spec_files: collect("spec_files"),
       source_kinds: collect("source_kinds"),
+      auth: {
+        status: authStatuses.length === 0 ? "unspecified" : (authStatuses.length === 1 ? authStatuses[0] : "mixed"),
+        requirements: Array.from(new Map(selected.flatMap((item) =>
+          item && item.auth && Array.isArray(item.auth.requirements) ? item.auth.requirements : []
+        ).map((value) => [JSON.stringify(value), value])).values()).slice(0, 50),
+        schemes: Array.from(new Map(selected.flatMap((item) =>
+          item && item.auth && Array.isArray(item.auth.schemes) ? item.auth.schemes : []
+        ).map((value) => [JSON.stringify(value), value])).values()).slice(0, 50),
+      },
+      parameters,
+      request_schemas: collectObjects("request_schemas", 20),
+      response_schemas: collectObjects("response_schemas", 50),
     };
   }
 

@@ -491,7 +491,7 @@ async function buildEntry(req, norm, scope) {
 
   let research = null;
   if (typeof Research !== "undefined" && Research && typeof Research.buildResearchEvent === "function") {
-    const responseFingerprint = await Research.responseSchemaFingerprint(req);
+    const responseSchema = await Research.responseSchemaSummary(req);
     research = Research.buildResearchEvent({
       url: (req.request && req.request.url) || null,
       method: (req.request && req.request.method) || (norm && norm.method) || "GET",
@@ -504,7 +504,7 @@ async function buildEntry(req, norm, scope) {
       requestBodyText: req.request && req.request.postData && req.request.postData.text,
       responseStatus: req.response && req.response.status,
       responseContentType: Research.getHeader(req.response && req.response.headers, "content-type"),
-      responseSchemaFingerprint: responseFingerprint,
+      responseSchema,
     });
     research.hypotheses = await Research.runHypothesisProvider(
       Research.mockLocalAdapter,

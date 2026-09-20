@@ -124,6 +124,41 @@ console.log("\n=== Research differential hints and hypotheses ===");
   assert(generated.hypotheses[0].test_plans[0].execution === "not_supported", "test plan cannot execute");
 }
 
+console.log("\n=== SpecQL 3.1 documented differential metadata ===");
+{
+  const url = "https://management.azure.com/providers/Microsoft.Test/things?api-version=2024-01-01&expand=all&hidden=1";
+  const event = Research.buildResearchEvent({
+    url,
+    method: "POST",
+    norm: Normalizer.normalise(url, "POST"),
+    headers: {},
+    requestBodyText: JSON.stringify({ name: "demo", undocumentedInput: true }),
+    responseStatus: 200,
+    responseSchema: Research.schemaSummary(JSON.stringify({ id: "1", undocumentedOutput: "value" })),
+    result: {
+      status: "exact_match",
+      provider_namespace: "Microsoft.Test",
+      matched_route_key: "POST /providers/Microsoft.Test/things",
+      matched_versions: ["2024-01-01"],
+      matched_version: "2024-01-01",
+      shard_name: "Microsoft.Test.min.json",
+      operation_metadata: {
+        plane: "management",
+        auth: { status: "required", requirements: [{ oauth2: ["Things.Write"] }], schemes: [{ name: "oauth2", type: "oauth2" }] },
+        parameters: { query: ["api-version", "expand"] },
+        request_schemas: [{ fingerprint: "sha256:req", type: "object", top_level_fields: [{ name: "name", type: "string", required: true }] }],
+        response_schemas: [{ fingerprint: "sha256:res", type: "object", top_level_fields: [{ name: "id", type: "string", required: true }], status_codes: ["200"] }],
+      },
+    },
+  });
+
+  eq(event.schemaVersion, "1.1.0", "research event schema bumped additively");
+  eq(event.specification.documentedAuth.status, "required", "documented auth copied into event");
+  assert(event.findings.some((finding) => finding.category === "undocumented_query_parameter" && finding.evidence.some((item) => item.includes("hidden"))), "undocumented query parameter compared with spec metadata");
+  assert(event.findings.some((finding) => finding.category === "undocumented_request_fields"), "undocumented request field detected");
+  assert(event.findings.some((finding) => finding.category === "undocumented_response_fields"), "undocumented response field detected");
+}
+
 console.log("\n=== Research export session ===");
 {
   const norm = Normalizer.normalise(

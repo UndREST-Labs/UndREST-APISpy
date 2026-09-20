@@ -64,7 +64,7 @@ Current built-in pack: `azure-rest-api-specs` — 302 bundled shards sourced fro
 
 1. `filters.js` — determines whether the request is in-scope (host + path rules)
 2. `normalizer.js` — normalises the ARM path (replaces name segments with `{name}`)
-3. `matcher.js` — looks up the normalised path in the shard index; returns one of:
+3. `matcher.js` — looks up the normalised path in the shard index and optionally exposes SpecQL 3.1 documented auth, parameter-name, and schema-summary metadata; returns one of:
    - `exact_match`
    - `route_match_version_mismatch`
    - `provider_known_route_unknown` (route unknown but provider shard present)
@@ -182,14 +182,14 @@ UndREST-APISpy/
 - Shard updates are exclusively owned by the `update-shards.yml` workflow + `scripts/prepare_data.py` pipeline.
 - cARL artefacts in `.github/carl/` are the canonical governance authority for this repository.
 - AI functionality is opt-in, offline-capable, and advisory only; deterministic controls own all execution decisions.
-- Research event schema `1.0.0` is versioned independently from pack manifest schema `2.0.0` and shard schema `3.0.0`.
+- Research event/session schema `1.1.0` is versioned independently from pack manifest schema `2.0.0`; APISpy accepts both shard schema `3.0.0` and additive `3.1.0` metadata.
 
 ## Known sharp edges
 
 - `extension/data/azure-provider-ops.json` may be absent; all code must degrade gracefully.
 - Portal sweep (`azure_portal_sweep.py`) requires interactive device-code auth on first run — cannot be automated in CI without a persisted credential.
 - The shard update workflow is triggered by `repository_dispatch` from UndREST-SpecQL; manual runs require `SPEQL_READ_TOKEN` to be configured.
-- The pack manifest (`extension/data/manifest.json`) schema is 2.0.0; shard files use schema 3.0.0 internally. These are distinct schemas — do not conflate them.
+- The pack manifest (`extension/data/manifest.json`) schema is 2.0.0; shard files use grouped schema 3.0.0 or additive 3.1.0 internally. These are distinct schemas — do not conflate them.
 - Test files use `require()` (CommonJS) for Node compatibility; keep extension lib files browser-compatible (no `require`/`import` at module scope).
 
 ## cARL installation

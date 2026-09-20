@@ -175,7 +175,7 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
 
   let research = null;
   if (typeof Research !== "undefined") {
-    const responseFingerprint = await Research.responseSchemaFingerprint(req);
+    const responseSchema = await Research.responseSchemaSummary(req);
     research = Research.buildResearchEvent({
       url,
       method,
@@ -188,7 +188,7 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
       requestBodyText: req.request && req.request.postData && req.request.postData.text,
       responseStatus: req.response && req.response.status,
       responseContentType: Research.getHeader(req.response && req.response.headers, "content-type"),
-      responseSchemaFingerprint: responseFingerprint,
+      responseSchema,
     });
     research.hypotheses = await Research.runHypothesisProvider(
       Research.mockLocalAdapter,

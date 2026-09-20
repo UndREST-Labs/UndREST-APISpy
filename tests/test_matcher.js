@@ -53,7 +53,20 @@ const MOCK_SHARD = {
           provider_namespace: "Microsoft.FakeProvider",
           plane: "management",
           versions: {
-            "2024-01-01": { is_preview: false, spec_files: ["fake/2024-01-01/fake.json"], operation_ids: ["Operations_List"], source_kinds: ["paths"] },
+            "2024-01-01": {
+              is_preview: false,
+              spec_files: ["fake/2024-01-01/fake.json"],
+              operation_ids: ["Operations_List"],
+              source_kinds: ["paths"],
+              auth: {
+                status: "required",
+                requirements: [{ oauth2: ["Operations.Read"] }],
+                schemes: [{ name: "oauth2", type: "oauth2" }],
+              },
+              parameters: { query: ["api-version", "expand"], path: ["subscriptionId"] },
+              request_schemas: [],
+              response_schemas: [{ fingerprint: "sha256:response", type: "object", top_level_fields: [{ name: "value", type: "array", required: true }], status_codes: ["200"] }],
+            },
             "2023-01-01": { is_preview: false, spec_files: ["fake/2023-01-01/fake.json"], operation_ids: ["Operations_ListLegacy"], source_kinds: ["paths"] },
           },
         },
@@ -128,6 +141,9 @@ console.log("\n=== Matcher.classify — exact match ===");
   assert(Array.isArray(r.matched_versions), "matched_versions is array");
   eq(r.operation_metadata.plane, "management", "operation plane returned additively");
   assert(r.operation_metadata.operation_ids.includes("Operations_List"), "matched operation ID returned");
+  eq(r.operation_metadata.auth.status, "required", "documented auth status returned from 3.1 shard");
+  assert(r.operation_metadata.parameters.query.includes("expand"), "documented query parameter returned from 3.1 shard");
+  eq(r.operation_metadata.response_schemas[0].fingerprint, "sha256:response", "documented response fingerprint returned from 3.1 shard");
 }
 
 console.log("\n=== Matcher.classify — route match, version mismatch ===");

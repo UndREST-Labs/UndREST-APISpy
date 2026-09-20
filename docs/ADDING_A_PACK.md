@@ -23,7 +23,7 @@ This guide walks through the steps needed to add shards for a new API platform.
 
 ## Step 1 — Generate shards for the new API
 
-The shard format (schema 3.0.0) is defined by [UndREST-SpecQL](https://github.com/UndREST-Labs/UndREST-SpecQL).
+The shard format (schema 3.0.0, with additive research metadata in 3.1.0) is defined by [UndREST-SpecQL](https://github.com/UndREST-Labs/UndREST-SpecQL). APISpy supports both versions.
 Each shard file is a minified JSON document with this top-level shape:
 
 ```json
@@ -278,7 +278,7 @@ jobs:
 
 ## Checklist
 
-- [ ] Shard files generated in schema 3.0.0 format
+- [ ] Shard files generated in schema 3.0.0 or 3.1.0 format
 - [ ] `prepare_data.py --merge` run successfully — manifest v2.0.0 updated
 - [ ] Custom normaliser registered (if host/path structure differs from ARM)
 - [ ] `filters.js` updated with new hosts/suffixes (if new domain)

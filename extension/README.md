@@ -282,7 +282,7 @@ If a provider shard fails to load at runtime, the affected entry is shown as a r
 
 The extension ships with pre-extracted shard files in `data/shards/`.  
 These are `.min.json` files derived from the SpeQL grouped/sharded export
-(`api-index-grouped.json`, schema 3.0.0), one file per Azure provider namespace.
+(`api-index-grouped.json`, schema 3.0.0 or additive 3.1.0), one file per Azure provider namespace. Schema 3.1.0 may include optional documented auth, parameter-name, and schema-summary metadata used by Research Mode.
 
 A top-level `data/manifest.json` is read once on startup.  When a request arrives
 for a provider like `Microsoft.Storage`, only the `Microsoft.Storage.min.json`

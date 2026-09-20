@@ -19,9 +19,9 @@ The governing principle is **models advise; deterministic controls execute**. Th
 
 ### UndREST-SpecQL
 
-SpecQL owns static API knowledge and generated inventory. Existing schema 3.0.0 shards already provide the first slice with route identity, provider namespace, API versions, operation IDs, source files, source kinds, and management/data-plane classification.
+SpecQL owns static API knowledge and generated inventory. Existing schema 3.0.0 shards provide route identity, provider namespace, API versions, operation IDs, source files, source kinds, and management/data-plane classification. Additive schema 3.1.0 shards optionally add documented auth requirements, parameter names, and bounded request/response schema summaries with structural fingerprints.
 
-No SpecQL schema change is required for this slice. Future optional additions should use an additive grouped/sharded minor schema version and remain optional to APISpy consumers. Candidate additions include schema fingerprints, auth requirements, resource hierarchy, version lineage, capability tags, and field summaries.
+APISpy treats every 3.1.0 field as optional and remains compatible with 3.0.0 shards. Future additions should preserve that compatibility model. Resource hierarchy, richer version lineage, capability tags, and sensitivity annotations remain candidates for later versions.
 
 ### UndREST-APISpy
 
@@ -45,7 +45,7 @@ AI is disabled by default. The bundled provider is local and deterministic. Prov
 
 ## Research event schema
 
-Research events use schema version `1.0.0`. Important fields include:
+Research events use schema version `1.1.0`. Important fields include:
 
 - event/timestamp/correlation/source metadata;
 - method, host, original and normalised paths, redacted query parameters, and API version;
@@ -53,6 +53,7 @@ Research events use schema version `1.0.0`. Important fields include:
 - request/response schema fingerprints where available;
 - deterministic classification state and reason;
 - SpecQL route, versions, operation IDs, spec files, source kinds, pack/source, and plane;
+- optional documented auth requirements, parameter names, and request/response schema summaries from SpecQL 3.1.0;
 - provider enrichment capability/risk tags where available;
 - non-secret JWT metadata;
 - deterministic findings;
@@ -68,6 +69,8 @@ The first slice emits structured findings for:
 - completely unmapped routes;
 - known resource paths observed with undocumented HTTP methods;
 - suspicious or capability-like query parameters;
+- query parameters absent from SpecQL 3.1.0 operation metadata;
+- observed request/response top-level fields absent from documented schema summaries;
 - equivalent normalised operations observed through multiple hosts.
 
 A finding records category, confidence, evidence, affected operations, why the discrepancy is interesting, relevant metadata, and the next investigative question. Findings do not claim vulnerabilities.
@@ -90,9 +93,9 @@ Generated inventory, pack manifests, provider-operation datasets, and demo scree
 
 ## Phased evolution
 
-1. **Current vertical slice:** sanitised APISpy events, existing SpecQL metadata, deterministic findings, local hypothesis adapter, manual test plans, detail UI, and JSON export.
-2. **Additive SpecQL metadata:** optional auth requirements, schema fingerprints/field summaries, API-family/resource hierarchy, version lineage, capability tags, and sensitivity annotations. Existing 3.0.0 consumers must continue to operate when these fields are absent.
-3. **Session correlation:** richer sibling, parent/child, version, host, permission, and control/data-plane comparisons across events and packs.
+1. **Completed vertical slice:** sanitised APISpy events, deterministic findings, local hypothesis adapter, manual test plans, detail UI, and JSON export.
+2. **Completed additive metadata slice:** optional SpecQL 3.1.0 auth requirements, parameter names, and schema fingerprints/field summaries, consumed compatibly by APISpy research schema 1.1.0.
+3. **Session correlation:** richer sibling, parent/child, version, host, permission, and control/data-plane comparisons across events and packs; future SpecQL metadata may add resource hierarchy, version lineage, capability tags, and sensitivity annotations.
 4. **Additional Microsoft packs:** Graph, Entra/internal identity, portal/internal, M365 workloads, and service-specific APIs through existing pack/normaliser hooks.
 5. **External providers, if approved:** adapters may submit only the same bounded model context used by the local adapter. Credential handling and provider configuration remain outside captured data.
 6. **Separate future executor, if ever approved:** deterministic allowlists, tenant/resource boundaries, method restrictions, rate limits, audit logs, and per-plan human approval. It must not be part of the model adapter.

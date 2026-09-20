@@ -81,7 +81,7 @@ APISpy can derive sanitised research events and deterministic observed-vs-docume
 
 Use **AI: Off / AI: Local** to opt in or out, and **Save Research** to export a portable JSON session containing sanitised events, findings, optional hypotheses, bounded non-executable test plans, provenance, and redaction status.
 
-Raw bearer tokens, cookies, SAS signatures, API keys, client secrets, authentication codes, refresh tokens, and request/response bodies are excluded from research persistence, provider input, and research exports. See [Research architecture](docs/RESEARCH_ARCHITECTURE.md) for schema, trust boundaries, and the SpecQL/APISpy ownership split.
+Raw bearer tokens, cookies, SAS signatures, API keys, client secrets, authentication codes, refresh tokens, and request/response bodies are excluded from research persistence, provider input, and research exports. When additive SpecQL 3.1.0 metadata is available, APISpy also compares documented query parameters and schema field summaries; existing 3.0.0 shards remain supported. See [Research architecture](docs/RESEARCH_ARCHITECTURE.md) for schema, trust boundaries, and the SpecQL/APISpy ownership split.
 
 ## API Packs
 
@@ -100,7 +100,7 @@ Click the **Packs** button in the APISpy toolbar to open the pack settings dialo
 See **[docs/ADDING_A_PACK.md](docs/ADDING_A_PACK.md)** for a step-by-step guide to adding shards for a new API platform (e.g. AWS, Google Cloud, a custom internal API).
 
 The high-level steps are:
-1. Generate shard files in the schema 3.0.0 format (one file per provider/service namespace)
+1. Generate shard files in grouped schema 3.0.0 or additive 3.1.0 format (one file per provider/service namespace)
 2. Run `scripts/prepare_data.py --pack-id <id> --merge` to bundle the shards
 3. Register a custom request normaliser if the new API uses non-ARM URL patterns
 4. Extend `lib/filters.js` with the new platform's hosts/suffixes

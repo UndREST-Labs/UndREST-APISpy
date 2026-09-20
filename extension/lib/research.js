@@ -300,15 +300,35 @@
     return typeof value;
   }
 
-  function schemaFingerprint(bodyText) {
+  function _jsonValueType(value) {
+    if (value === null) return "null";
+    if (Array.isArray(value)) return "array";
+    return typeof value;
+  }
+
+  function schemaSummary(bodyText) {
     if (!bodyText || typeof bodyText !== "string" || bodyText.length > MAX_BODY_LENGTH) return null;
     const parsed = _safeJsonParse(bodyText);
     if (parsed === null) return null;
-    const shape = JSON.stringify(_shapeOf(parsed, 0));
-    return "json-shape-fnv1a32:" + _stableHash(shape);
+    const shapeValue = _shapeOf(parsed, 0);
+    const shape = JSON.stringify(shapeValue);
+    const topLevelFields = _isObject(parsed)
+      ? Object.keys(parsed).sort().slice(0, 100).map((name) => ({ name: sanitizeText(name), type: _jsonValueType(parsed[name]) }))
+      : [];
+    return {
+      fingerprint: "json-shape-fnv1a32:" + _stableHash(shape),
+      type: Array.isArray(parsed) ? "array" : (parsed === null ? "null" : typeof parsed),
+      topLevelFields,
+      fieldsTruncated: _isObject(parsed) && Object.keys(parsed).length > 100,
+    };
   }
 
-  function responseSchemaFingerprint(harEntry) {
+  function schemaFingerprint(bodyText) {
+    const summary = schemaSummary(bodyText);
+    return summary ? summary.fingerprint : null;
+  }
+
+  function responseSchemaSummary(harEntry) {
     const contentType = getHeader(harEntry && harEntry.response && harEntry.response.headers, "content-type") || "";
     const size = harEntry && harEntry.response && harEntry.response.content && harEntry.response.content.size;
     if (!/\bjson\b|\+json\b/i.test(contentType) || (Number.isFinite(size) && size > MAX_BODY_LENGTH)) {
@@ -338,13 +358,18 @@
               return finish(null);
             }
           }
-          finish(schemaFingerprint(decoded));
+          finish(schemaSummary(decoded));
         });
       } catch (_) {
         clearTimeout(timer);
         finish(null);
       }
     });
+  }
+
+  async function responseSchemaFingerprint(harEntry) {
+    const summary = await responseSchemaSummary(harEntry);
+    return summary ? summary.fingerprint : null;
   }
 
   function _statusToState(status) {
@@ -452,21 +477,61 @@
       });
     }
 
+    const documentedParameters = event.specification && event.specification.documentedParameters;
+    const documentedQuery = documentedParameters && Array.isArray(documentedParameters.query)
+      ? documentedParameters.query
+      : null;
     const suspiciousQueryKeys = queryKeys.filter((key) => key !== "api-version" && (_isSensitiveQueryKey(key) || String(key).startsWith("x-") || String(key).startsWith("ms-")));
-    if (suspiciousQueryKeys.length) {
+    const undocumentedQueryKeys = documentedQuery
+      ? queryKeys.filter((key) => key !== "api-version" && !documentedQuery.includes(key))
+      : [];
+    const interestingQueryKeys = Array.from(new Set(suspiciousQueryKeys.concat(undocumentedQueryKeys))).sort();
+    if (interestingQueryKeys.length) {
       findings.push({
         category: "undocumented_query_parameter",
-        confidence: "medium",
-        evidence: suspiciousQueryKeys.map((key) => "Query parameter: " + key),
+        confidence: undocumentedQueryKeys.length ? "high" : "medium",
+        evidence: interestingQueryKeys.map((key) => "Query parameter: " + key),
         affectedOperations: [event.provider || event.normalisedPath || "observed operation"],
-        whyTheDifferenceIsInteresting: "The request includes query parameters that are not obviously represented in the public route inventory and may carry capability or auth semantics.",
+        whyTheDifferenceIsInteresting: documentedQuery
+          ? "The request includes query parameters absent from the documented operation metadata."
+          : "The request includes query parameters that are not obviously represented in the public route inventory and may carry capability or auth semantics.",
         relevantMetadata: {
-          query: event.query || {},
+          queryParameterNames: interestingQueryKeys,
+          documentedQueryParameters: documentedQuery || [],
           provider: event.provider || null,
         },
         suggestedNextQuestion: "Do these parameters reflect a capability flag, a resource selector, or a hidden control-plane contract?",
       });
     }
+
+    const compareFields = (observedSummary, documentedSchemas, category, subject) => {
+      if (!observedSummary || !Array.isArray(observedSummary.topLevelFields) || !Array.isArray(documentedSchemas) || !documentedSchemas.length) return;
+      const documented = new Set(documentedSchemas.flatMap((schema) =>
+        Array.isArray(schema && schema.top_level_fields) ? schema.top_level_fields.map((field) => field && field.name).filter(Boolean) : []
+      ));
+      if (!documented.size) return;
+      const extras = observedSummary.topLevelFields.map((field) => field.name).filter((name) => name && !documented.has(name));
+      if (!extras.length) return;
+      findings.push({
+        category,
+        confidence: "high",
+        evidence: extras.slice(0, 20).map((name) => "Observed undocumented field: " + name),
+        affectedOperations: [event.specification && event.specification.matchedRouteKey || event.normalisedPath || "observed operation"],
+        whyTheDifferenceIsInteresting: "The observed " + subject + " contains top-level fields absent from the documented schema summaries.",
+        relevantMetadata: {
+          undocumentedFields: extras.slice(0, 20),
+          observedFingerprint: observedSummary.fingerprint || null,
+          documentedFingerprints: documentedSchemas.map((schema) => schema && schema.fingerprint).filter(Boolean).slice(0, 50),
+        },
+        suggestedNextQuestion: "Are these fields version-specific, portal-only, or omitted from the published contract?",
+      });
+    };
+    compareFields(event.requestSchema, event.specification && event.specification.requestSchemas, "undocumented_request_fields", "request");
+    const responseSchemas = event.specification && event.specification.responseSchemas;
+    const applicableResponses = Array.isArray(responseSchemas) && Number.isFinite(event.responseStatus)
+      ? responseSchemas.filter((schema) => !Array.isArray(schema.status_codes) || schema.status_codes.includes(String(event.responseStatus)) || schema.status_codes.includes("default"))
+      : responseSchemas;
+    compareFields(event.responseSchema, applicableResponses, "undocumented_response_fields", "response");
 
     return findings;
   }
@@ -557,7 +622,7 @@
   function buildModelContext(eventOrEvents) {
     const events = (Array.isArray(eventOrEvents) ? eventOrEvents : [eventOrEvents]).filter(Boolean).slice(0, 100);
     return {
-      schema_version: "1.0.0",
+      schema_version: "1.1.0",
       instructions: {
         task: "Generate advisory security research hypotheses from deterministic findings.",
         constraints: [
@@ -729,7 +794,7 @@
     const allHypotheses = config.aiEnabled ? events.flatMap((item) => item.hypotheses && item.hypotheses.hypotheses || []) : [];
 
     return {
-      schema_version: "1.0.0",
+      schema_version: "1.1.0",
       session_metadata: {
         exported_at: new Date().toISOString(),
         session_name: sessionName || "apispy-research-session",
@@ -779,8 +844,10 @@
     const correlationId = rawCorrelationId ? _boundedString(rawCorrelationId) : null;
     const eventId = "evt-" + _stableHash([timestamp, method, hostname, normalisedPath, correlationId || ""].join("|"));
     const operationMetadata = result.operation_metadata || {};
+    const requestSchema = opts.requestSchema || schemaSummary(opts.requestBodyText);
+    const responseSchema = opts.responseSchema || null;
     const event = {
-      schemaVersion: "1.0.0",
+      schemaVersion: "1.1.0",
       eventId,
       timestamp,
       correlationId,
@@ -799,8 +866,10 @@
       requestHeaders,
       responseStatus: Number.isFinite(opts.responseStatus) ? opts.responseStatus : null,
       responseContentType: opts.responseContentType || null,
-      requestSchemaFingerprint: opts.requestSchemaFingerprint || schemaFingerprint(opts.requestBodyText),
-      responseSchemaFingerprint: opts.responseSchemaFingerprint || null,
+      requestSchema,
+      responseSchema,
+      requestSchemaFingerprint: opts.requestSchemaFingerprint || (requestSchema && requestSchema.fingerprint) || null,
+      responseSchemaFingerprint: opts.responseSchemaFingerprint || (responseSchema && responseSchema.fingerprint) || null,
       classification: {
         status,
         state: classification.state,
@@ -815,6 +884,10 @@
         operationIds: Array.isArray(operationMetadata.operation_ids) ? operationMetadata.operation_ids.slice(0, 100).map(_boundedString) : [],
         specFiles: Array.isArray(operationMetadata.spec_files) ? operationMetadata.spec_files.slice(0, 100).map(_boundedString) : [],
         sourceKinds: Array.isArray(operationMetadata.source_kinds) ? operationMetadata.source_kinds.slice(0, 20).map(_boundedString) : [],
+        documentedAuth: operationMetadata.auth || { status: "unspecified", requirements: [], schemes: [] },
+        documentedParameters: operationMetadata.parameters || {},
+        requestSchemas: Array.isArray(operationMetadata.request_schemas) ? operationMetadata.request_schemas.slice(0, 20) : [],
+        responseSchemas: Array.isArray(operationMetadata.response_schemas) ? operationMetadata.response_schemas.slice(0, 50) : [],
         pack: opts.packId || null,
         source: result.shard_name || null,
       },
@@ -852,7 +925,9 @@
     redactQueryString,
     sanitizeUrl,
     extractJwtMetadata,
+    schemaSummary,
     schemaFingerprint,
+    responseSchemaSummary,
     responseSchemaFingerprint,
     findDifferentialFindings,
     findDifferentials: findDifferentialFindings,

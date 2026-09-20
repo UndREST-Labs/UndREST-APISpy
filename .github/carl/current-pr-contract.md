@@ -7,12 +7,7 @@ stop and escalate before proceeding.
 
 ## Goal
 
-Add the first reviewable AI-assisted research vertical slice to APISpy while
-preserving existing classification, pack, sweep, and offline behaviour:
-
-```text
-capture -> sanitise -> enrich -> deterministic finding -> advisory hypothesis -> export
-```
+Consume additive SpecQL 3.1.0 research metadata while preserving compatibility with existing 3.0.0 shards, and use documented parameter/schema summaries for deterministic observed-versus-documented findings.
 
 ## Contract status
 
@@ -38,18 +33,16 @@ active
 
 ## Approved scope
 
-- Add browser-compatible modules for research events, sanitisation, JWT metadata extraction, deterministic differential findings, bounded test plans, and provider-neutral hypothesis generation.
-- Add a deterministic mock/local hypothesis provider and strict output validation.
-- Integrate sanitised research events into interactive capture and portal-sweep capture.
-- Add explicit opt-in AI controls and JSON research-session export without changing existing CSV semantics.
-- Add a non-noisy Research section to request details.
-- Add focused plain-Node tests and directly related architecture/trust-boundary documentation.
-- Add optional matcher result metadata sourced from existing shard fields without changing route identity or generated shard schemas.
+- Additively expose optional SpecQL 3.1.0 auth, parameter-name, and schema-summary fields through matcher results.
+- Carry bounded documented metadata into research events and model context.
+- Add deterministic findings for undocumented query parameters and request/response schema differences.
+- Preserve all existing behavior when consuming SpecQL 3.0.0 shards where the fields are absent.
+- Add focused plain-Node tests and update directly related architecture/cARL documentation.
 
 ## Intentional amendments
 
-- Supersedes the previous generated-artefact-boundary task after the user explicitly requested and approved implementation of the research vertical slice.
-- Preserves all prior generated-artefact ownership and offline-operation invariants.
+- Supersedes the completed first research vertical slice after the user requested continuation.
+- Preserves all prior generated-artefact ownership, sanitisation, advisory-only AI, and offline-operation invariants.
 
 ## Forbidden scope
 
@@ -80,12 +73,12 @@ active
 ## Files expected to change
 
 - `.github/carl/current-pr-contract.md`
+- `.github/carl/memory.md`
+- `extension/lib/matcher.js`
 - `extension/lib/research.js`
-- `extension/lib/matcher.js` (optional additive metadata only)
-- `extension/panel.html`, `extension/panel.js`, `extension/devtools.html`, `extension/devtools.js`
-- `extension/panel.css` only if minimal controls require styling
-- `tests/test_research.js`, `package.json`
-- `extension/README.md` and/or `docs/RESEARCH_ARCHITECTURE.md`
+- `tests/test_matcher.js`
+- `tests/test_research.js` and/or `tests/test_research_safety.js`
+- `docs/RESEARCH_ARCHITECTURE.md`
 
 ## Tests / validation
 
@@ -113,5 +106,4 @@ Focused tests must cover redaction, JWT metadata, event construction, determinis
 
 ## Context reset notes
 
-This contract covers only the first APISpy research vertical slice. SpecQL
-schema enrichment and real model providers remain later phases.
+This contract covers optional consumption of the additive SpecQL 3.1.0 research metadata. Real model providers and any executor remain later phases.
