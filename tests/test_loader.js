@@ -116,6 +116,25 @@ const V1_MANIFEST = {
   ],
 };
 
+const GRAPH_READY_MANIFEST = {
+  schema_version: "2.0.0",
+  packs: [
+    ...V2_MANIFEST.packs,
+    {
+      pack_id: "microsoft-graph",
+      display_name: "Microsoft Graph",
+      platform: "microsoft-graph",
+      shards: [
+        {
+          filename: "microsoft-graph/Microsoft.Graph.min.json",
+          provider_namespace: "Microsoft.Graph",
+          hosts: ["graph.microsoft.com"],
+        },
+      ],
+    },
+  ],
+};
+
 // ── Helper: inject a manifest directly into the loader's promise cache ────────
 
 function _injectManifest(raw) {
@@ -239,6 +258,41 @@ console.log("\n=== Loader: v1.0.0 manifest auto-upgrade ===");
   const ciMatch = Loader.findShardEntry(manifest4, "microsoft.storage");
   assert(ciMatch !== null,                                    "case-insensitive match found");
   assert(ciMatch.entry.provider_namespace === "Microsoft.Storage", "correct namespace returned");
+
+  console.log("\n=== Loader.findShardEntryForRequest (generic host fallback) ===");
+  Loader.setEnabledPackIds(null);
+  const graphMatch = Loader.findShardEntryForRequest(
+    GRAPH_READY_MANIFEST,
+    null,
+    "GRAPH.MICROSOFT.COM"
+  );
+  assert(graphMatch !== null, "single enabled Graph host shard found without ARM namespace");
+  assert(graphMatch.pack.pack_id === "microsoft-graph", "Graph host fallback returns Graph pack");
+
+  const noGraphMatch = Loader.findShardEntryForRequest(V2_MANIFEST, null, "graph.microsoft.com");
+  assert(noGraphMatch === null, "no Graph shard returns null safely");
+
+  const ambiguousManifest = JSON.parse(JSON.stringify(GRAPH_READY_MANIFEST));
+  ambiguousManifest.packs[2].shards.push({
+    filename: "microsoft-graph/Microsoft.Graph.Mail.min.json",
+    provider_namespace: "Microsoft.Graph.Mail",
+    hosts: ["graph.microsoft.com"],
+  });
+  const ambiguousMatch = Loader.findShardEntryForRequest(
+    ambiguousManifest,
+    null,
+    "graph.microsoft.com"
+  );
+  assert(ambiguousMatch === null, "multiple host shards fail closed rather than choosing arbitrarily");
+
+  Loader.setEnabledPackIds(["azure-rest-api-specs"]);
+  const disabledGraphMatch = Loader.findShardEntryForRequest(
+    GRAPH_READY_MANIFEST,
+    null,
+    "graph.microsoft.com"
+  );
+  assert(disabledGraphMatch === null, "disabled Graph pack is ignored by host fallback");
+  Loader.setEnabledPackIds(null);
 
   // ── Tests: getEnabledPackIds / setEnabledPackIds ───────────────────────────
 

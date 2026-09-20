@@ -333,9 +333,9 @@ async function onRequestFinished(req) {
 
   // Record entries where a provider namespace was identified, or entries for
   // ARM root routes (valid ARM endpoints with no provider namespace such as
-  // /subscriptions or /tenants).  Skip out-of-scope and no-spec-match entries.
-  if (entry.result.provider_namespace !== null ||
-      entry.result.status === Matcher.STATUS.ARM_ROOT_ROUTE) {
+  // /subscriptions or /tenants), or supported Graph requests awaiting an
+  // authoritative pack. Skip other out-of-scope and no-spec-match entries.
+  if (RequestPipeline.shouldRetain(entry.result, norm)) {
     state.requests.push(entry);
     renderRow(entry, state.requests.length - 1);
     updateCountBadge();
@@ -419,30 +419,9 @@ async function buildEntry(req, norm, scope) {
     ? new Date(req.startedDateTime).toLocaleTimeString()
     : "--:--:--";
 
-  let result;
-  let packId = null;
-  if (!scope.inScope) {
-    result = Matcher.classify(norm, null, { inScope: false });
-  } else if (!norm.ok) {
-    result = Matcher.classify(norm, null, { inScope: true });
-  } else {
-    // Infer provider namespace and load shard lazily
-    const ns = Matcher.inferProviderNamespace(norm.pathname);
-    let shard = null;
-    let shardLoadError = null;
-    if (ns) {
-      try {
-        const manifest = await Loader.loadManifest();
-        const shardSource = Loader.findShardEntry(manifest, ns);
-        packId = shardSource && shardSource.pack ? shardSource.pack.pack_id : null;
-        shard = await Loader.loadShard(ns);
-      } catch (err) {
-        shardLoadError = err && err.message ? err.message : String(err);
-        shard = null;
-      }
-    }
-    result = Matcher.classify(norm, shard, { inScope: true, shardLoadError });
-  }
+  const classified = await RequestPipeline.classifyRequest(norm, scope);
+  const result = classified.result;
+  const packId = classified.packId;
 
   // ── Azure enrichment (Azure pack only, optional) ──────────────────────────
   // Attempt enrichment for any in-scope, normalised request.  If enrichment

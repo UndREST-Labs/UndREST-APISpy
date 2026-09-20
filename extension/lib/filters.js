@@ -23,8 +23,6 @@
   const HOST_SUFFIXES = [
     ".management.azure.com",
     ".azure.com",
-    ".microsoft.com",
-    ".microsoftonline.com",
     ".windows.net",
     ".azure.net",
     ".azure-api.net",
@@ -83,6 +81,10 @@
     const host = parsed.hostname.toLowerCase();
     const path = parsed.pathname;
 
+    if (host === "graph.microsoft.com" &&
+        (parsed.protocol !== "https:" || parsed.port !== "")) {
+      return { inScope: false, reason: "unsupported_graph_origin" };
+    }
     if (isInScopeHost(host)) {
       return { inScope: true, reason: "host_match" };
     }

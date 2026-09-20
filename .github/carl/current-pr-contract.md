@@ -1,4 +1,4 @@
-<!-- version: 2.1.0 -->
+<!-- version: 2.2.0 -->
 # Current PR Contract
 
 This contract constrains implementation scope for the active PR. Update it when
@@ -7,9 +7,9 @@ stop and escalate before proceeding.
 
 ## Goal
 
-Consume additive SpecQL 3.2.0 grouped/sharded route-correlation metadata while
-preserving compatibility with SpecQL 3.1.0 and 3.0.0 shards, and derive bounded
-deterministic session correlation across observed APISpy research events.
+Prepare bounded Microsoft Graph request capture and normalisation for a future
+authoritative SpecQL pack without fabricating Graph routes or modifying generated
+pack data.
 
 ## Contract status
 
@@ -23,7 +23,9 @@ active
 - Do not regenerate or hand-edit shards, manifests, provider-op data, or demos.
 - Do not redesign the existing matcher, loader, normaliser, or pack architecture.
 - Do not add npm or Python dependencies.
-- Do not add ARM special-casing beyond existing pack and normaliser hooks.
+- Do not add Microsoft Graph special-casing inside ARM structural normalisation.
+- Do not add Graph shards, route metadata, runtime fetches, or speculative route
+  templates.
 
 ## Carry-forward rules
 
@@ -37,36 +39,34 @@ active
 
 ## Approved scope
 
-- Additively expose optional SpecQL 3.2.0 `api_family` and `version_lineage`
-  metadata through matcher operation metadata.
-- Carry bounded resource-family, resource-hierarchy, and version-lineage metadata
-  into research events, model context, and portable JSON export.
-- Add deterministic session correlation for resource families, parent/child
-  hierarchy, sibling operations on a resource, observed verbs, API versions and
-  preview/stable lineage, hosts, documented auth requirements, and
-  management-plane/data-plane relationships.
-- Add evidence-based deterministic findings from session correlation, including
-  cross-plane resource observation, preview use when stable versions exist,
-  inconsistent sibling-family auth requirements, undocumented observed verbs,
-  and same resource across multiple hosts.
-- Preserve graceful behaviour for SpecQL 3.1.0/3.0.0 shards where the new fields
-  are absent.
-- Add focused plain-Node tests and update directly related architecture/cARL
-  documentation.
+- Register a built-in Microsoft Graph normaliser through
+  `Normalizer.registerPackNormaliser`.
+- Match only explicitly supported Graph hosts and schemes.
+- Preserve `/v1.0` and `/beta` in normalised paths while exposing the path
+  version through the existing `apiVersion` field.
+- Template only conservative identifier shapes; preserve query parameter names
+  and the existing normalised-request object shape.
+- Keep Azure ARM normalisation and matching behaviour unchanged.
+- Add a small generic loader fallback that selects a shard by exact request host
+  only when exactly one enabled shard advertises that host.
+- Capture supported Graph requests safely as no-spec matches while no Graph shard
+  is bundled.
+- Add focused plain-Node tests and update pack/readiness documentation.
 
 ## Intentional amendments
 
-- Supersedes the completed SpecQL 3.1.0 metadata slice after the user requested
-  phase-three session correlation.
-- Bumps research event/session/model-context schema additively from 1.1.0 to
-  1.2.0.
-- Existing 1.1.0 sessions/exports must remain readable as missing optional
-  correlation metadata.
+- Supersedes the completed phase-three session-correlation contract for this
+  bounded Microsoft Graph pack-readiness phase.
+- The only supported Graph host in this phase is the global endpoint
+  `graph.microsoft.com`; sovereign hosts require separately verified coverage.
+- A host-only shard fallback is deliberately fail-closed when zero or multiple
+  enabled shards advertise the same host.
 
 ## Forbidden scope
 
 - Modifying generated content under `extension/data/` or `demos/`.
 - Modifying workflows or adding dependencies.
+- Fabricating Microsoft Graph route, operation, version, auth, or schema metadata.
 - Sending captured data to external services.
 - Persisting or exporting bearer tokens, cookies, SAS signatures, API keys,
   client secrets, auth codes, refresh tokens, or raw request/response bodies.
@@ -80,8 +80,10 @@ active
 - Model input contains structured, bounded context rather than raw browser traffic.
 - Model output is untrusted, schema-validated, bounded, provenance-tagged, and advisory.
 - AI is disabled by default and provider failure degrades safely.
-- New research schemas are versioned separately from existing pack/shard schemas.
-- Future Microsoft API packs use existing pack and normaliser extension points.
+- Future Microsoft API packs use existing pack, loader, matcher, and normaliser
+  extension points.
+- Real Graph route classification requires an authoritative generated SpecQL
+  export bundled as an enabled local pack.
 
 ## Security constraints
 
@@ -96,22 +98,33 @@ active
 
 - `.github/carl/current-pr-contract.md`
 - `.github/carl/memory.md`
-- `extension/lib/matcher.js`
-- `extension/lib/research.js`
+- `extension/lib/normalizer.js`
+- `extension/lib/filters.js`
+- `extension/lib/loader.js`
+- `extension/lib/request-pipeline.js`
 - `extension/panel.js`
-- `extension/devtools.js` if compact sweep persistence needs a field mirror
+- `extension/devtools.js`
+- `extension/panel.html`
+- `extension/devtools.html`
+- `tests/test_normalizer.js`
+- `tests/test_filters.js`
+- `tests/test_loader.js`
 - `tests/test_matcher.js`
-- `tests/test_research.js`
-- `tests/test_research_safety.js`
-- `docs/RESEARCH_ARCHITECTURE.md`
-- `README.md` and/or `extension/README.md`
+- `tests/test_capture_pipeline.js`
+- `package.json`
+- `docs/ADDING_A_PACK.md`
+- `README.md`
+- `extension/README.md`
 
 ## Tests / validation
 
 ```bash
 npm test
 node --check extension/lib/matcher.js
-node --check extension/lib/research.js
+node --check extension/lib/normalizer.js
+node --check extension/lib/filters.js
+node --check extension/lib/loader.js
+node --check extension/lib/request-pipeline.js
 node --check extension/panel.js
 node --check extension/devtools.js
 git diff --check
@@ -120,27 +133,27 @@ git status --short
 carl doctor
 ```
 
-Focused tests must cover SpecQL 3.2.0 metadata consumption, compatibility with
-3.1.0/3.0.0 shards lacking the fields, each correlation dimension, each new
-finding, bounds/truncation, schema 1.2.0 export/model-context compatibility, and
-redaction of new fields.
+Focused tests must cover Graph `v1.0` and `beta`, exact supported-host matching,
+lookalike-host rejection, conservative identifier templating, scheme bounds,
+unchanged Azure behaviour, generic future-pack host lookup, ambiguity rejection,
+and safe no-shard classification.
 
 ## Stop conditions
 
-- Any raw credential reaches provider input, persistence, or research export.
 - Existing classification tests regress.
 - The implementation requires generated-data, workflow, or dependency changes.
-- Model output can trigger a network action.
-- Correlation output is unbounded or omits truncation state.
+- Graph matching admits non-HTTPS traffic or non-allowlisted hosts.
+- Graph route metadata must be invented to complete the phase.
 
 ## Escalation triggers
 
-- A real external model integration is requested.
-- A future executor or active test runner is requested.
-- SpecQL export schema changes beyond additive 3.2.0 route metadata become required.
+- A sovereign Graph hostname is requested without an authoritative repository
+  source or separately verified documentation.
+- A future Graph export requires ambiguous multi-shard host routing not expressed
+  by the current manifest.
 
 ## Context reset notes
 
-This contract covers optional consumption of additive SpecQL 3.2.0 route-family
-and version-lineage metadata plus bounded deterministic session correlation.
-Real model providers and any executor remain later phases.
+This contract covers request-side Graph readiness only. The repository still
+contains no authoritative Graph pack, performs no runtime fetch, and must report
+Graph requests as unclassified until generated SpecQL data is bundled.

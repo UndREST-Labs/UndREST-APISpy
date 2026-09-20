@@ -92,7 +92,7 @@ function _flushSweepBuffer() {
 }
 
 /**
- * Build and store a compact processed entry for a single ARM request.
+ * Build and store a compact processed entry for a single in-scope request.
  * Mirrors the logic in panel.js's onRequestFinished / buildEntry.
  *
  * @param {object} req   HAR-style request object (from onRequestFinished or synthetic).
@@ -104,13 +104,6 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
   const method = req.request && req.request.method;
   if (!url) return;
 
-  // Filter to management.azure.com — the ARM control-plane endpoint.
-  try {
-    if (new URL(url).hostname.toLowerCase() !== "management.azure.com") return;
-  } catch (_) {
-    return;
-  }
-
   const time  = req.startedDateTime
     ? new Date(req.startedDateTime).toLocaleTimeString()
     : "--:--:--";
@@ -118,28 +111,9 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
   const scope = Filters.classifyScope(url);
   const norm  = Normalizer.normalise(url, method);
 
-  let result;
-  let packId = null;
-  if (!scope.inScope) {
-    result = Matcher.classify(norm, null, { inScope: false });
-  } else if (!norm.ok) {
-    result = Matcher.classify(norm, null, { inScope: true });
-  } else {
-    const ns = Matcher.inferProviderNamespace(norm.pathname);
-    let shard = null;
-    let shardLoadError = null;
-    if (ns) {
-      try {
-        const manifest = await Loader.loadManifest();
-        const shardSource = Loader.findShardEntry(manifest, ns);
-        packId = shardSource && shardSource.pack ? shardSource.pack.pack_id : null;
-        shard = await Loader.loadShard(ns);
-      } catch (err) {
-        shardLoadError = err && err.message ? err.message : String(err);
-      }
-    }
-    result = Matcher.classify(norm, shard, { inScope: true, shardLoadError });
-  }
+  const classified = await RequestPipeline.classifyRequest(norm, scope);
+  const result = classified.result;
+  const packId = classified.packId;
 
   // Optional Azure enrichment (only when loaded — graceful fallback otherwise)
   let enrichment = null;
@@ -163,9 +137,8 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
     } catch (_) { /* enrichment is optional */ }
   }
 
-  // Only store entries where a provider namespace was identified, or ARM root
-  // routes — same filter as panel.js's onRequestFinished.
-  if (result.provider_namespace === null && result.status !== Matcher.STATUS.ARM_ROOT_ROUTE) {
+  // Keep the same provider, ARM-root, and Graph readiness entries as panel.js.
+  if (!RequestPipeline.shouldRetain(result, norm)) {
     return;
   }
 

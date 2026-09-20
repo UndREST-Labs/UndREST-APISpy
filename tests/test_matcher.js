@@ -816,6 +816,15 @@ console.log("\n=== Matcher.isArmRootPath ===");
     "isArmRootPath is first-segment only; provider inference handles the rest");
 }
 
+console.log("\n=== Matcher.classify — Microsoft Graph without bundled shard ===");
+{
+  const n = norm("https://graph.microsoft.com/v1.0/users/42", "GET");
+  const r = Matcher.classify(n, null, { inScope: true });
+  eq(r.status, Matcher.STATUS.NO_SPEC_MATCH, "Graph request without shard is a safe no-spec match");
+  eq(r.reason, "no_provider_inferred", "Graph request does not fabricate a provider namespace");
+  eq(r.provider_namespace, null, "Graph request without shard keeps provider namespace null");
+}
+
 console.log("\n=== Matcher.classify — ARM_ROOT_ROUTE: /subscriptions ===");
 {
   const n = norm("https://management.azure.com/subscriptions?api-version=2022-12-01", "GET");

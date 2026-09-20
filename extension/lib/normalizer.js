@@ -46,8 +46,6 @@
    */
   const ARM_HOST_SUFFIXES = [
     ".azure.com",
-    ".microsoft.com",
-    ".microsoftonline.com",
     ".windows.net",
     ".azure.net",
     ".azure-api.net",
@@ -55,7 +53,6 @@
 
   const ARM_EXACT_HOSTS = new Set([
     "management.azure.com",
-    "graph.microsoft.com",
     "login.microsoftonline.com",
     "login.windows.net",
     "graph.windows.net",
@@ -562,6 +559,58 @@
     return normalised.join("/");
   }
 
+  // ── Microsoft Graph pack normalisation ─────────────────────────────────────
+
+  const MICROSOFT_GRAPH_PACK_ID = "microsoft-graph";
+  const MICROSOFT_GRAPH_HOSTS = new Set([
+    "graph.microsoft.com",
+  ]);
+  const GRAPH_VERSION_SEGMENTS = new Set(["v1.0", "beta"]);
+  const GRAPH_EMAIL_IDENTIFIER_RE = /^[^/@\s]+@[^/@\s]+\.[^/@\s]+$/;
+
+  function isMicrosoftGraphHost(host) {
+    return MICROSOFT_GRAPH_HOSTS.has((host || "").toLowerCase());
+  }
+
+  function templateMicrosoftGraphPath(rawPath) {
+    const normalisedPath = normalisePath(rawPath);
+    return normalisedPath.split("/").map((segment) => {
+      if (GRAPH_EMAIL_IDENTIFIER_RE.test(segment)) return "{id}";
+      return segment;
+    }).join("/");
+  }
+
+  function normaliseMicrosoftGraphRequest(rawUrl, rawMethod) {
+    let parsed;
+    try {
+      parsed = new URL(rawUrl);
+    } catch (err) {
+      return { ok: false, error: "invalid_url: " + String(err) };
+    }
+
+    const host = parsed.hostname.toLowerCase();
+    if (parsed.protocol !== "https:" || parsed.port !== "" || !isMicrosoftGraphHost(host)) {
+      return { ok: false, error: "unsupported_microsoft_graph_origin" };
+    }
+
+    const method = (rawMethod || "GET").toUpperCase().trim();
+    const pathname = parsed.pathname;
+    const normalisedPath = templateMicrosoftGraphPath(pathname);
+    const firstSegment = pathname.split("/").find((segment) => segment !== "");
+    const apiVersion = GRAPH_VERSION_SEGMENTS.has(firstSegment) ? firstSegment : null;
+
+    return {
+      ok: true,
+      method,
+      host,
+      pathname,
+      normalisedPath,
+      armPath: normalisedPath,
+      apiVersion,
+      fullUrl: rawUrl,
+    };
+  }
+
   // ── Pack-normaliser registry ─────────────────────────────────────────────────
 
   /**
@@ -620,6 +669,13 @@
     }
     _PACK_NORMALISERS.set(packId, normaliser);
   }
+
+  registerPackNormaliser(MICROSOFT_GRAPH_PACK_ID, {
+    matchesRequest(host, _path) {
+      return isMicrosoftGraphHost(host);
+    },
+    normalise: normaliseMicrosoftGraphRequest,
+  });
 
   /**
    * Parse and normalise all relevant fields from a raw request URL + method.
@@ -715,6 +771,9 @@
     looksLikeArmPath,
     extractApiVersion,
     registerPackNormaliser,
+    isMicrosoftGraphHost,
+    templateMicrosoftGraphPath,
+    normaliseMicrosoftGraphRequest,
     TEMPLATE_RULES,
     ARM_SCOPE_RULES,
     // Read-only snapshots of the internal sets/arrays for diagnostics/tests only.
@@ -722,6 +781,7 @@
     ARM_EXACT_HOSTS_LIST:      Object.freeze(Array.from(ARM_EXACT_HOSTS)),
     ARM_HOST_SUFFIXES_LIST:    Object.freeze(ARM_HOST_SUFFIXES.slice()),
     ARM_ROOT_SEGMENTS_LIST:    Object.freeze(Array.from(ARM_ROOT_SEGMENTS)),
+    MICROSOFT_GRAPH_HOSTS_LIST: Object.freeze(Array.from(MICROSOFT_GRAPH_HOSTS)),
   };
 
 }(typeof window !== "undefined" ? window : exports));

@@ -166,6 +166,58 @@
   }
 
   /**
+   * Find a shard for a normalised request without assuming ARM URL structure.
+   * Provider namespace remains the preferred key. When it is unavailable, an
+   * exact host fallback is used only if exactly one enabled shard advertises
+   * that host; ambiguous host mappings fail closed.
+   *
+   * @param {object} manifest
+   * @param {string|null} providerNamespace
+   * @param {string} host
+   * @returns {{ entry: object, pack: object }|null}
+   */
+  function findShardEntryForRequest(manifest, providerNamespace, host) {
+    if (providerNamespace) {
+      return findShardEntry(manifest, providerNamespace);
+    }
+
+    const lowerHost = (host || "").toLowerCase();
+    if (!lowerHost) return null;
+
+    const matches = [];
+    for (const pack of _enabledPacks(manifest)) {
+      for (const entry of pack.shards || []) {
+        const hosts = Array.isArray(entry.hosts) ? entry.hosts : [];
+        if (hosts.some((candidate) => String(candidate).toLowerCase() === lowerHost)) {
+          matches.push({ entry, pack });
+        }
+      }
+    }
+    return matches.length === 1 ? matches[0] : null;
+  }
+
+  function loadShardEntry(entry) {
+    if (!entry || !entry.filename) return Promise.resolve(null);
+    const cacheKey = "file:" + entry.filename;
+    if (_shardCache.has(cacheKey)) {
+      return _shardCache.get(cacheKey);
+    }
+
+    const promise = fetch(chrome.runtime.getURL("data/shards/" + entry.filename))
+      .then((r) => {
+        if (!r.ok) throw new Error("Failed to load shard " + entry.filename + ": " + r.status);
+        return r.json();
+      })
+      .catch((err) => {
+        _shardCache.delete(cacheKey);
+        throw err;
+      });
+
+    _shardCache.set(cacheKey, promise);
+    return promise;
+  }
+
+  /**
    * Load (and cache) the shard for the given provider namespace.
    * Returns null if the shard is not in any enabled pack.
    *
@@ -187,17 +239,10 @@
       return null;
     }
 
-    const { entry } = match;
-    const promise = fetch(chrome.runtime.getURL("data/shards/" + entry.filename))
-      .then((r) => {
-        if (!r.ok) throw new Error("Failed to load shard " + entry.filename + ": " + r.status);
-        return r.json();
-      })
-      .catch((err) => {
-        _shardCache.delete(cacheKey); // allow retry
-        throw err;
-      });
-
+    const promise = loadShardEntry(match.entry).catch((err) => {
+      _shardCache.delete(cacheKey);
+      throw err;
+    });
     _shardCache.set(cacheKey, promise);
     return promise;
   }
@@ -270,6 +315,8 @@
     listBundledProviders,
     getSourceMetadata,
     findShardEntry,
+    findShardEntryForRequest,
+    loadShardEntry,
     getEnabledPackIds,
     setEnabledPackIds,
     resetCache,

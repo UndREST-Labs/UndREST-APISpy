@@ -91,6 +91,20 @@ An **API pack** is a named collection of provider shards derived from one API pl
 |---------|----------|--------|-------------|
 | `azure-rest-api-specs` | Azure | [Azure/azure-rest-api-specs](https://github.com/Azure/azure-rest-api-specs) | Azure Resource Manager provider shards (updated nightly via UndREST-SpecQL) |
 
+### Microsoft Graph readiness
+
+APISpy now captures and conservatively normalises HTTPS requests to the exact
+global Microsoft Graph host, `graph.microsoft.com`, through the existing
+pack-normaliser extension point. `/v1.0` and `/beta` remain explicit path
+segments; GUID, numeric, and email-like identifier segments are templated while
+ambiguous slugs remain literal. Lookalike hosts are not treated as Graph.
+
+No Microsoft Graph pack or Graph shards are bundled. Until an authoritative
+generated SpecQL export is available, Graph requests are shown safely as
+unclassified and no route metadata is invented. The extension performs no
+runtime fetch; future Graph route classification must come from a checked-in,
+enabled `microsoft-graph` pack.
+
 ### Selecting active packs
 
 Click the **Packs** button in the APISpy toolbar to open the pack settings dialog.  From there you can enable or disable individual packs.  Your selection is saved to browser storage and persists across DevTools reloads.
@@ -213,6 +227,7 @@ UndREST-APISpy/
 │   ├── test_loader.js
 │   ├── test_matcher.js
 │   ├── test_normalizer.js
+│   ├── test_capture_pipeline.js
 │   └── vhs/
 │       ├── 08-apispy-portal-sweep.tape
 │       └── helpers/

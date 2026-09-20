@@ -39,6 +39,7 @@ apispy/
 │   │   ├── normalizer.js       ← Extracts & normalises request fields; supports pack normaliser hooks
 │   │   ├── loader.js           ← Pack-aware shard loader (v1.0.0/v2.0.0 manifest, user pack selection)
 │   │   ├── matcher.js          ← Classifies requests against the index
+│   │   ├── request-pipeline.js ← Shared panel/sweep shard resolution and retention
 │   │   └── azure-enrichment.js ← Azure provider-operation enrichment (optional; gracefully absent)
 │   ├── data/
 │   │   ├── manifest.json          ← Pack manifest (schema 2.0.0): lists packs + their shards + source metadata
@@ -60,7 +61,8 @@ apispy/
 │   ├── test_filters.js
 │   ├── test_loader.js
 │   ├── test_normalizer.js
-│   └── test_matcher.js
+│   ├── test_matcher.js
+│   └── test_capture_pipeline.js
 └── docs/
     └── ADDING_A_PACK.md    ← Step-by-step guide for adding a new API pack
 ```
@@ -77,6 +79,19 @@ packs, so multiple platforms can coexist without increasing startup cost for
 platforms the user doesn't need.
 
 To add a new pack, see **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)**.
+
+### Microsoft Graph readiness
+
+The built-in `microsoft-graph` normaliser uses the same pack hook described
+above. It accepts only HTTPS on the exact host `graph.microsoft.com`, preserves
+`/v1.0` and `/beta`, and conservatively templates GUID, numeric, and email-like
+identifier segments. Ambiguous path slugs remain literal.
+
+No authoritative Microsoft Graph SpecQL pack is currently bundled, so Graph
+requests are captured as **No spec match** rather than being assigned invented
+route metadata. APISpy performs no runtime specification fetch. Real Graph
+classification begins only after an authoritative generated pack is checked in
+and enabled.
 
 ---
 
@@ -369,15 +384,11 @@ If `azure-provider-ops.json` is absent or fails to load, the enrichment module i
 
 ---
 
-- **Path template matching for non-ARM APIs.**  
-  For Azure Resource Manager URLs the normalizer applies structural ARM rules:
-  subscription/resource-group/tenant/location/management-group scope segments are
-  replaced with canonical placeholders, and name-position segments within the
-  provider resource path are replaced with `{name}`.  This significantly reduces
-  false *Unknown route* results for ARM paths.  However, non-ARM API paths (e.g.
-  Microsoft Graph `v1.0/…` paths) only receive basic normalisation (GUID and
-  pure-integer segment replacement), so many Graph routes still appear as
-  *Unknown route* even when the provider shard is bundled.
+- **Authoritative non-ARM route data.**
+  Microsoft Graph request normalisation is ready, but route classification is
+  intentionally unavailable until SpecQL produces an authoritative generated
+  Graph pack. APISpy does not fabricate route templates or fetch specifications
+  at runtime.
 
 - **No background sync.**  
   The bundled index is a point-in-time snapshot.  There is no automatic update
@@ -392,7 +403,7 @@ If `azure-provider-ops.json` is absent or fails to load, the enrichment module i
 ## Future planned enhancements
 
 1. **Remote artifact updates** — pull latest shards from GitHub Pages / artifact store.
-2. **Graph API support** — add Microsoft Graph spec shards.
+2. **Graph API pack** — bundle an authoritative generated Microsoft Graph SpecQL export.
 3. **Export timestamp display** — show index freshness in the panel.
 4. **Filter persistence** — remember the last-used filter across panel opens.
 

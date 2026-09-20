@@ -218,7 +218,7 @@ console.log("\n=== Normalizer.normalise — armPath field ===");
 
 console.log("\n=== Normalizer.isAzureArmHost ===");
 assert(Normalizer.isAzureArmHost("management.azure.com"),      "management.azure.com is ARM host");
-assert(Normalizer.isAzureArmHost("graph.microsoft.com"),       "graph.microsoft.com is ARM host");
+assert(!Normalizer.isAzureArmHost("graph.microsoft.com"),      "graph.microsoft.com is not handled as ARM");
 assert(Normalizer.isAzureArmHost("myhost.azure.com"),          "*.azure.com suffix matches");
 assert(Normalizer.isAzureArmHost("custom.management.azure.com"), "nested *.azure.com matches");
 assert(!Normalizer.isAzureArmHost("example.com"),              "example.com is NOT an ARM host");
@@ -272,6 +272,55 @@ console.log("\n=== Normalizer.normalise — ARM templating gated on Azure host =
   eq(r.armPath, r.normalisedPath, "Graph webhook path: armPath equals normalisedPath (no ARM templating)");
   assert(!r.armPath.includes("{subscriptionId}"), "Graph webhook path: 'subscriptions' NOT replaced with {subscriptionId}");
   assert(r.armPath.includes("subscriptions"),     "Graph webhook path: literal 'subscriptions' preserved");
+}
+
+console.log("\n=== Normalizer built-in Microsoft Graph pack normaliser ===");
+{
+  eq(Normalizer.MICROSOFT_GRAPH_HOSTS_LIST.length, 1, "only one Graph host is supported");
+  eq(Normalizer.MICROSOFT_GRAPH_HOSTS_LIST[0], "graph.microsoft.com", "global Graph host is allowlisted");
+  assert(Normalizer.isMicrosoftGraphHost("GRAPH.MICROSOFT.COM"), "Graph host match is case-insensitive");
+  assert(!Normalizer.isMicrosoftGraphHost("api.graph.microsoft.com"), "Graph subdomain lookalike rejected");
+  assert(!Normalizer.isMicrosoftGraphHost("graph.microsoft.com.example.org"), "Graph suffix lookalike rejected");
+
+  const v1 = Normalizer.normalise(
+    "https://graph.microsoft.com/v1.0/users/550e8400-e29b-41d4-a716-446655440000/messages/42?$select=id,subject&$top=5",
+    "get"
+  );
+  assert(v1.ok === true, "v1.0 Graph URL normalises");
+  eq(v1.method, "GET", "Graph method uppercased");
+  eq(v1.apiVersion, "v1.0", "v1.0 exposed as API version");
+  eq(v1.normalisedPath, "/v1.0/users/{guid}/messages/{id}", "GUID and numeric identifiers templated");
+  eq(v1.armPath, v1.normalisedPath, "Graph armPath reuses Graph-normalised path");
+  assert(v1.normalisedPath.startsWith("/v1.0/"), "v1.0 remains an explicit path segment");
+  assert(v1.fullUrl.includes("$select=") && v1.fullUrl.includes("$top="), "Graph query parameter names preserved");
+
+  const beta = Normalizer.normalise(
+    "https://graph.microsoft.com/beta/users/alice%40example.com/memberOf",
+    "GET"
+  );
+  eq(beta.apiVersion, "beta", "beta exposed as API version");
+  eq(beta.normalisedPath, "/beta/users/{id}/memberOf", "email-like identifier templated");
+  assert(beta.normalisedPath.startsWith("/beta/"), "beta remains an explicit path segment");
+
+  const conservative = Normalizer.normalise(
+    "https://graph.microsoft.com/v1.0/groups/engineering-team/owners",
+    "GET"
+  );
+  eq(
+    conservative.normalisedPath,
+    "/v1.0/groups/engineering-team/owners",
+    "ambiguous slug remains literal"
+  );
+
+  const insecure = Normalizer.normalise("http://graph.microsoft.com/v1.0/users/42", "GET");
+  assert(insecure.ok === false, "non-HTTPS Graph origin rejected by Graph normaliser");
+
+  const customPort = Normalizer.normalise("https://graph.microsoft.com:444/v1.0/users/42", "GET");
+  assert(customPort.ok === false, "Graph custom port rejected by Graph normaliser");
+
+  const lookalike = Normalizer.normalise("https://api.graph.microsoft.com/v1.0/users/42", "GET");
+  assert(lookalike.ok === true, "lookalike host still receives generic normalisation");
+  eq(lookalike.apiVersion, null, "lookalike host is not claimed by Graph normaliser");
 }
 
 console.log(`\nNormalizer: ${pass} passed, ${fail} failed`);
