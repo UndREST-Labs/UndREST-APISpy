@@ -825,6 +825,100 @@ console.log("\n=== Matcher.classify — Microsoft Graph without bundled shard ==
   eq(r.provider_namespace, null, "Graph request without shard keeps provider namespace null");
 }
 
+console.log("\n=== Matcher.classify — authoritative Microsoft Graph shard ===");
+{
+  const graphShard = {
+    metadata: { provider_namespace: "Microsoft.Graph" },
+    provider_namespace: "Microsoft.Graph",
+    hosts: {
+      "graph.microsoft.com": {
+        routes: {
+          "GET /v1.0/users": {
+            method: "GET",
+            path_template: "/v1.0/users",
+            provider_namespace: "Microsoft.Graph",
+            plane: "data",
+            version_lineage: { ordered_versions: [{ api_version: "v1.0", stability: "stable" }] },
+            versions: {
+              "v1.0": {
+                is_preview: false,
+                operation_ids: ["users.user.ListUser"],
+                spec_files: ["v1.0/openapi.yaml"],
+                source_kinds: ["paths"],
+                parameters: { query: ["$count", "$filter", "$select"] },
+              },
+            },
+          },
+          "GET /v1.0/users/{name}": {
+            method: "GET",
+            path_template: "/v1.0/users/{name}",
+            provider_namespace: "Microsoft.Graph",
+            plane: "data",
+            version_lineage: { ordered_versions: [{ api_version: "v1.0", stability: "stable" }] },
+            versions: {
+              "v1.0": {
+                is_preview: false,
+                operation_ids: ["users.user.GetUser"],
+                spec_files: ["v1.0/openapi.yaml"],
+                source_kinds: ["paths"],
+                parameters: { path: ["name"], query: ["$expand", "$select"] },
+              },
+            },
+          },
+          "GET /beta/users": {
+            method: "GET",
+            path_template: "/beta/users",
+            provider_namespace: "Microsoft.Graph",
+            plane: "data",
+            version_lineage: { ordered_versions: [{ api_version: "beta", stability: "preview" }] },
+            versions: {
+              beta: {
+                is_preview: true,
+                operation_ids: ["users.user.ListUser"],
+                spec_files: ["beta/openapi.yaml"],
+                source_kinds: ["paths"],
+                parameters: { query: ["$count", "$filter", "$select"] },
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+
+  const stable = Matcher.classify(norm("https://graph.microsoft.com/v1.0/users?$select=id", "GET"), graphShard, { inScope: true });
+  eq(stable.status, Matcher.STATUS.EXACT_MATCH, "Graph v1.0 route matches authoritative shard");
+  eq(stable.provider_namespace, "Microsoft.Graph", "Graph match reports generated provider namespace");
+  eq(stable.matched_version, "v1.0", "Graph path version is matched");
+  eq(stable.operation_metadata.plane, "data", "Graph route remains data plane");
+  assert(stable.operation_metadata.parameters.query.includes("$select"), "Graph OData query metadata is preserved");
+  eq(stable.operation_metadata.version_lineage.ordered_versions[0].stability, "stable", "Graph v1.0 is stable");
+
+  const templated = Matcher.classify(norm("https://graph.microsoft.com/v1.0/users/AAMkAGVmMDEz", "GET"), graphShard, { inScope: true });
+  eq(templated.status, Matcher.STATUS.EXACT_MATCH, "Graph opaque identifier matches generated {name} template");
+  eq(templated.matched_route_key, "GET /v1.0/users/{name}", "Graph canonical fallback returns generated route key");
+
+  const preview = Matcher.classify(norm("https://graph.microsoft.com/beta/users", "GET"), graphShard, { inScope: true });
+  eq(preview.status, Matcher.STATUS.EXACT_MATCH, "Graph beta route matches authoritative shard");
+  eq(preview.matched_version, "beta", "Graph beta path version is matched");
+  eq(preview.operation_metadata.version_lineage.ordered_versions[0].stability, "preview", "Graph beta is preview");
+
+  const ambiguousShard = {
+    metadata: { provider_namespace: "Example.API" },
+    provider_namespace: "Example.API",
+    hosts: {
+      "api.example.com": {
+        routes: {
+          "GET /v1.0/{name}/items": graphShard.hosts["graph.microsoft.com"].routes["GET /v1.0/users/{name}"],
+          "GET /v1.0/users/{name}": graphShard.hosts["graph.microsoft.com"].routes["GET /v1.0/users/{name}"],
+        },
+      },
+    },
+  };
+  const ambiguous = Matcher.classify(norm("https://api.example.com/v1.0/users/items", "GET"), ambiguousShard, { inScope: true });
+  eq(ambiguous.status, Matcher.STATUS.PROVIDER_KNOWN_NO_ROUTE, "ambiguous opaque template matches fail closed");
+}
+
 console.log("\n=== Matcher.classify — ARM_ROOT_ROUTE: /subscriptions ===");
 {
   const n = norm("https://management.azure.com/subscriptions?api-version=2022-12-01", "GET");

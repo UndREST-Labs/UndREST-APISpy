@@ -7,8 +7,8 @@ stop and escalate before proceeding.
 
 ## Goal
 
-Persist bounded APISpy panel view preferences across DevTools panel reloads while
-validating browser storage and preserving safe defaults.
+Bundle the validated, authoritative Microsoft Graph SpecQL export as an offline
+APISpy pack and verify Graph request classification without runtime fetching.
 
 ## Contract status
 
@@ -19,12 +19,13 @@ active
 - Do not add an autonomous request or exploitation engine.
 - Do not allow model output to trigger browser or network actions.
 - Do not add a real external model provider or runtime network dependency.
-- Do not regenerate or hand-edit shards, manifests, provider-op data, or demos.
+- Do not hand-edit generated shards or manifest entries; use `scripts/prepare_data.py`.
+- Do not alter workflow triggers, permissions, or remote source selection.
 - Do not redesign the existing matcher, loader, normaliser, or pack architecture.
 - Do not add npm or Python dependencies.
 - Do not add Microsoft Graph special-casing inside ARM structural normalisation.
-- Do not add Graph shards, route metadata, runtime fetches, or speculative route
-  templates.
+- Do not add runtime fetches, speculative routes, or metadata not present in the
+  pinned authoritative SpecQL export.
 
 ## Carry-forward rules
 
@@ -38,26 +39,31 @@ active
 
 ## Approved scope
 
-- Persist active status filters, sort mode, quick-filter toggles, and autoscroll.
-- Store a small versioned JSON preference object in browser local storage.
-- Validate every restored field against explicit allowlists and boolean types.
-- Fall back to existing defaults when storage is absent, malformed, inaccessible,
-  or contains unsupported values.
-- Synchronise restored state to toolbar controls before request rendering.
-- Add focused plain-Node tests and update user-facing documentation.
+- Amend this contract before generated-data changes.
+- Run `scripts/prepare_data.py --merge` against the validated local Graph export.
+- Add one `microsoft-graph` pack containing the generated `Microsoft.Graph` shard.
+- Preserve the pinned source repository, branch, commit, schema, host, route, and
+  version metadata emitted by SpecQL.
+- Keep all data local and lazily loaded through the existing exact-host fallback.
+- Make automated Azure shard refreshes merge-safe so they replace the Azure pack
+  without deleting the bundled Graph pack.
+- Add focused tests for manifest registration, pack selection, Graph host lookup,
+  v1.0 and beta route classification, preview stability, and OData metadata.
+- Update pack documentation and durable cARL memory.
 
 ## Intentional amendments
 
-- Supersedes the completed export-freshness contract for this bounded panel
-  preference persistence phase.
-- Column-value filters are intentionally session-only because their available
-  values depend on currently observed traffic.
-- Existing API-pack selection and AI opt-in storage remain independent.
+- Supersedes the completed panel-preference phase.
+- User approval authorises bundling the validated candidate generated from
+  `microsoftgraph/msgraph-metadata` commit
+  `b8cbef92f6959dca8150bf3edcc650863765e529`.
+- The generated shard is intentionally large because bounded operation, schema,
+  parameter, and version-lineage metadata powers APISpy research features.
 
 ## Forbidden scope
 
-- Modifying generated content under `extension/data/` or `demos/`.
-- Modifying workflows or adding dependencies.
+- Hand-editing generated content under `extension/data/` or modifying `demos/`.
+- Modifying workflow triggers, permissions, or remote source selection; adding dependencies.
 - Fabricating Microsoft Graph route, operation, version, auth, or schema metadata.
 - Sending captured data to external services.
 - Persisting or exporting bearer tokens, cookies, SAS signatures, API keys,
@@ -72,7 +78,7 @@ active
 - Model input contains structured, bounded context rather than raw browser traffic.
 - Model output is untrusted, schema-validated, bounded, provenance-tagged, and advisory.
 - AI is disabled by default and provider failure degrades safely.
-- Future Microsoft API packs use existing pack, loader, matcher, and normaliser
+- Microsoft API packs use existing pack, loader, matcher, and normaliser
   extension points.
 - Real Graph route classification requires an authoritative generated SpecQL
   export bundled as an enabled local pack.
@@ -90,11 +96,15 @@ active
 
 - `.github/carl/current-pr-contract.md`
 - `.github/carl/memory.md`
-- `extension/lib/panel-preferences.js`
-- `extension/panel.js`
-- `extension/panel.html`
-- `tests/test_panel_preferences.js`
-- `package.json`
+- `.github/carl/plans/microsoft-graph-pack-integration.md`
+- `extension/data/manifest.json`
+- `extension/data/shards/microsoft-graph/Microsoft.Graph.min.json`
+- `tests/test_loader.js`
+- `tests/test_matcher.js`
+- `tests/test_prepare_data.py`
+- `.github/workflows/update-shards.yml`
+- `.github/workflows/node-tests.yml`
+- `scripts/prepare_data.py`
 - `README.md`
 - `extension/README.md`
 
@@ -102,33 +112,33 @@ active
 
 ```bash
 npm test
-node --check extension/lib/panel-preferences.js
-node --check extension/panel.js
+python3 -m pytest tests/test_prepare_data.py -v
+node --check extension/lib/loader.js
+node --check extension/lib/matcher.js
 git diff --check
-git diff --stat HEAD -- extension/data/ demos/
 git status --short
 carl doctor
 ```
 
-Focused tests must cover defaults, valid round-trips, unknown statuses and sort
-modes, malformed JSON, unavailable storage, write failures, and empty status
-selection.
+Focused tests must cover the generated Graph pack manifest and shard, exact-host
+selection, v1.0 stable and beta preview matches, OData parameter preservation,
+and regeneration through `prepare_data.py --merge`.
 
 ## Stop conditions
 
-- Existing panel, loader, or classification tests regress.
-- The implementation requires generated-data, workflow, or dependency changes.
-- Restored values bypass explicit validation.
-- Persistence includes captured requests, column values, credentials, or research
-  data.
+- Existing loader, matcher, panel, or research tests regress.
+- The generated source metadata does not match the approved pinned commit.
+- Graph routes require runtime network access or fabricated metadata.
+- Generated output modifies the Azure pack or demos unexpectedly.
+- The shard cannot be loaded and matched within the existing pack architecture.
 
 ## Escalation triggers
 
-- Synchronising preferences across devices or accounts is requested.
-- Persistence requires extension permissions or remote storage.
+- The generated Graph shard must be partitioned or structurally transformed.
+- Integration requires extension permissions, remote storage, or runtime updates.
 
 ## Context reset notes
 
-This contract covers local display preferences only. It does not persist captured
-traffic or column-value filters and does not alter request classification, pack
-selection, AI consent, export freshness, or research safety boundaries.
+This contract covers deterministic bundling of the validated Microsoft Graph
+candidate only. Generated data must come through `prepare_data.py`; runtime
+matching continues through the existing pack loader and remains offline.

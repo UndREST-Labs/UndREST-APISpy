@@ -22,5 +22,13 @@ jobs:
         with:
           node-version: '20'
 
-      - name: Run tests
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Run JavaScript tests
         run: npm test
+
+      - name: Validate generated pack data
+        run: python3 tests/test_prepare_data.py

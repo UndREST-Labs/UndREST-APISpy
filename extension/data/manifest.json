@@ -2770,6 +2770,36 @@
         }
       ],
       "skipped_shards": []
+    },
+    {
+      "pack_id": "microsoft-graph",
+      "display_name": "Microsoft Graph",
+      "platform": "microsoft-graph",
+      "description": "Microsoft Graph v1.0 and beta OpenAPI metadata sourced from microsoftgraph/msgraph-metadata via UndREST-SpecQL.",
+      "source_label": "microsoft-graph",
+      "source_metadata": {
+        "generated_at": "2026-09-20T17:23:57Z",
+        "source_repo": "microsoftgraph/msgraph-metadata",
+        "source_branch": "master",
+        "source_commit": "b8cbef92f6959dca8150bf3edcc650863765e529",
+        "tool_name": "SpecRecon",
+        "schema_version": "3.2.0"
+      },
+      "total_bundled_shards": 1,
+      "total_skipped_shards": 0,
+      "note_skipped": "Shards that could not be parsed were omitted.",
+      "shards": [
+        {
+          "filename": "microsoft-graph/Microsoft.Graph.min.json",
+          "provider_namespace": "Microsoft.Graph",
+          "hosts": [
+            "graph.microsoft.com"
+          ],
+          "route_count": 47451,
+          "size_bytes": 79631903
+        }
+      ],
+      "skipped_shards": []
     }
   ]
 }

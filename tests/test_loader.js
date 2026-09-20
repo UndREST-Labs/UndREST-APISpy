@@ -38,6 +38,9 @@ eval(
     .replace('typeof window !== "undefined" ? window : exports', "mockExports")
 );
 const { Loader } = mockExports;
+const BUNDLED_MANIFEST = JSON.parse(
+  require("fs").readFileSync(__dirname + "/../extension/data/manifest.json", "utf8")
+);
 
 // ── Test helpers ──────────────────────────────────────────────────────────────
 
@@ -153,6 +156,20 @@ function _injectManifest(raw) {
 console.log("\n=== Loader: v1.0.0 manifest auto-upgrade ===");
 
 (async () => {
+
+  console.log("\n=== Loader: bundled Microsoft Graph pack ===");
+  const bundledGraph = BUNDLED_MANIFEST.packs.find((pack) => pack.pack_id === "microsoft-graph");
+  assert(Boolean(bundledGraph), "bundled manifest registers microsoft-graph pack");
+  assert(bundledGraph.source_metadata.source_commit === "b8cbef92f6959dca8150bf3edcc650863765e529",
+    "Graph pack preserves pinned metadata commit");
+  assert(bundledGraph.shards.length === 1, "Graph pack has one fail-closed host shard");
+  assert(bundledGraph.shards[0].hosts.length === 1 && bundledGraph.shards[0].hosts[0] === "graph.microsoft.com",
+    "Graph shard advertises only graph.microsoft.com");
+  assert(bundledGraph.shards[0].route_count === 47451, "Graph manifest records 47,451 routes");
+  Loader.setEnabledPackIds(null);
+  const bundledGraphMatch = Loader.findShardEntryForRequest(BUNDLED_MANIFEST, null, "graph.microsoft.com");
+  assert(bundledGraphMatch && bundledGraphMatch.pack.pack_id === "microsoft-graph",
+    "bundled Graph pack is selected by exact host");
 
   _injectManifest(V1_MANIFEST);
   const manifest = await Loader.loadManifest();

@@ -77,12 +77,16 @@ def _pack_shards_subdir(pack_id: str) -> str:
 
 
 def find_sharded_zip(inventory_dir: str) -> str:
-    """Auto-detect the most recent sharded zip in inventory/."""
+    """Auto-detect the stable release asset or newest legacy sharded zip."""
+    stable = os.path.join(inventory_dir, "api-index-sharded.zip")
+    if os.path.isfile(stable):
+        return stable
     pattern = os.path.join(inventory_dir, "api-index-sharded-*.zip")
     candidates = sorted(glob.glob(pattern), reverse=True)
     if not candidates:
         raise FileNotFoundError(
-            "No api-index-sharded-*.zip found in " + inventory_dir
+            "No api-index-sharded.zip or api-index-sharded-*.zip found in "
+            + inventory_dir
             + ". Run scripts/export/export_api_inventory.py --sharded first."
         )
     return candidates[0]
