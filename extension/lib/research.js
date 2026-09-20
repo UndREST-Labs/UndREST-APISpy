@@ -49,6 +49,11 @@
   const MAX_BODY_LENGTH = 1024 * 1024;
   const MAX_EVENTS_PER_EXPORT = 5000;
   const MAX_HYPOTHESES = 10;
+  const RESEARCH_SCHEMA_VERSION = "1.2.0";
+  const MAX_CORRELATION_EVENTS = 500;
+  const MAX_CORRELATION_GROUPS = 100;
+  const MAX_CORRELATION_ITEMS = 50;
+  const MAX_CORRELATION_FINDINGS = 100;
 
   function _isObject(value) {
     return !!value && typeof value === "object" && !Array.isArray(value);
@@ -328,6 +333,51 @@
     return summary ? summary.fingerprint : null;
   }
 
+  function _boundedArray(values, limit) {
+    if (!Array.isArray(values)) return [];
+    return values.slice(0, limit).map((value) => sanitizeText(value));
+  }
+
+  function _copyApiFamily(apiFamily) {
+    if (!_isObject(apiFamily)) return null;
+    const resourceTypePath = _boundedArray(apiFamily.resource_type_path, 20);
+    const parentPath = _boundedArray(apiFamily.parent_resource_type_path, 20);
+    const copied = {
+      family_key: apiFamily.family_key ? sanitizeText(apiFamily.family_key) : null,
+      provider_namespace: apiFamily.provider_namespace ? sanitizeText(apiFamily.provider_namespace) : null,
+      resource_type_path: resourceTypePath,
+      resource_key: apiFamily.resource_key ? sanitizeText(apiFamily.resource_key) : null,
+      resource_depth: Number.isFinite(apiFamily.resource_depth) ? apiFamily.resource_depth : resourceTypePath.length,
+    };
+    if (parentPath.length) copied.parent_resource_type_path = parentPath;
+    if (apiFamily.parent_resource_key) copied.parent_resource_key = sanitizeText(apiFamily.parent_resource_key);
+    if (apiFamily.resource_type_path_truncated === true) copied.resource_type_path_truncated = true;
+    return copied;
+  }
+
+  function _copyVersionLineage(versionLineage) {
+    if (!_isObject(versionLineage)) return null;
+    const original = Array.isArray(versionLineage.ordered_versions) ? versionLineage.ordered_versions : [];
+    const ordered = original.slice(0, 100).map((item) => {
+      const copied = {
+        api_version: item && item.api_version ? sanitizeText(item.api_version) : null,
+        stability: item && ["preview", "stable", "unknown"].includes(item.stability) ? item.stability : "unknown",
+      };
+      if (item && item.previous_version) copied.previous_version = sanitizeText(item.previous_version);
+      if (item && item.next_version) copied.next_version = sanitizeText(item.next_version);
+      return copied;
+    }).filter((item) => item.api_version);
+    if (!ordered.length) return null;
+    const copied = { ordered_versions: ordered };
+    if (versionLineage.versions_truncated === true || original.length > ordered.length) copied.versions_truncated = true;
+    return copied;
+  }
+
+  function _versionLineageItem(versionLineage, apiVersion) {
+    const ordered = versionLineage && Array.isArray(versionLineage.ordered_versions) ? versionLineage.ordered_versions : [];
+    return ordered.find((item) => item && item.api_version === apiVersion) || null;
+  }
+
   function responseSchemaSummary(harEntry) {
     const contentType = getHeader(harEntry && harEntry.response && harEntry.response.headers, "content-type") || "";
     const size = harEntry && harEntry.response && harEntry.response.content && harEntry.response.content.size;
@@ -416,6 +466,32 @@
           normalisedPath: event.normalisedPath || null,
         },
         suggestedNextQuestion: "Does this versioned route retain the same auth and resource boundaries as the published version?",
+      });
+    }
+
+    const lineage = event.specification && event.specification.versionLineage;
+    const observedVersion = _versionLineageItem(lineage, event.apiVersion);
+    const stableVersions = lineage && Array.isArray(lineage.ordered_versions)
+      ? lineage.ordered_versions.filter((item) => item && item.stability === "stable").map((item) => item.api_version)
+      : [];
+    if (observedVersion && observedVersion.stability === "preview" && stableVersions.length) {
+      findings.push({
+        category: "preview_version_used_with_stable_available",
+        confidence: "medium",
+        evidence: [
+          "Observed preview api-version: " + event.apiVersion,
+          "Documented stable api-version(s): " + stableVersions.slice(0, 10).join(", "),
+        ],
+        affectedOperations: [event.specification && event.specification.matchedRouteKey || event.normalisedPath || "observed operation"],
+        whyTheDifferenceIsInteresting: "The operation used a documented preview version even though the route lineage includes stable documented versions.",
+        relevantMetadata: {
+          provider: event.provider || null,
+          apiVersion: event.apiVersion || null,
+          previousVersion: observedVersion.previous_version || null,
+          nextVersion: observedVersion.next_version || null,
+          stableVersions: stableVersions.slice(0, 20),
+        },
+        suggestedNextQuestion: "Is preview-only behaviour required here, or can the same resource path be compared against the stable documented version?",
       });
     }
 
@@ -621,8 +697,9 @@
 
   function buildModelContext(eventOrEvents) {
     const events = (Array.isArray(eventOrEvents) ? eventOrEvents : [eventOrEvents]).filter(Boolean).slice(0, 100);
+    const sessionCorrelation = buildSessionCorrelation(events);
     return {
-      schema_version: "1.1.0",
+      schema_version: RESEARCH_SCHEMA_VERSION,
       instructions: {
         task: "Generate advisory security research hypotheses from deterministic findings.",
         constraints: [
@@ -645,6 +722,7 @@
         auth_metadata: event.auth && event.auth.jwtMetadata || null,
         findings: (event.findings || []).slice(0, 20),
       })),
+      session_correlation: sessionCorrelation,
     };
   }
 
@@ -689,7 +767,18 @@
           specification: item.specification,
           auth: { jwtMetadata: item.auth_metadata },
           findings: item.findings || [],
-        })));
+        })).concat((context && context.session_correlation && context.session_correlation.findings || []).map((finding) => ({
+          eventId: "session-correlation",
+          method: null,
+          hostname: null,
+          normalisedPath: null,
+          apiVersion: null,
+          query: {},
+          classification: null,
+          specification: null,
+          auth: { jwtMetadata: null },
+          findings: [finding],
+        }))));
       },
     };
   }
@@ -727,32 +816,259 @@
     }
   }
 
-  function correlateEvents(events) {
-    const groups = new Map();
-    (events || []).forEach((event) => {
-      const key = [event.provider || "", event.normalisedPath || event.originalPath || ""].join("|");
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(event);
-    });
+  function _correlationKey(event) {
+    const family = event && event.specification && event.specification.apiFamily;
+    return family && family.resource_key
+      ? family.resource_key
+      : [event && event.provider || "", event && (event.normalisedPath || event.originalPath) || ""].join("|");
+  }
+
+  function _familyKey(event) {
+    const family = event && event.specification && event.specification.apiFamily;
+    return family && family.family_key ? family.family_key : (event && event.provider || "unknown");
+  }
+
+  function _unique(values, limit) {
+    return Array.from(new Set(values.filter((value) => value !== null && value !== undefined && value !== ""))).sort().slice(0, limit);
+  }
+
+  function _eventVersionSummary(event) {
+    const lineage = event.specification && event.specification.versionLineage;
+    const item = _versionLineageItem(lineage, event.apiVersion);
+    const ordered = lineage && Array.isArray(lineage.ordered_versions) ? lineage.ordered_versions : [];
+    const stableVersions = ordered.filter((version) => version && version.stability === "stable").map((version) => version.api_version).slice(0, MAX_CORRELATION_ITEMS);
+    return {
+      api_version: event.apiVersion || null,
+      stability: item ? item.stability : "unknown",
+      previous_version: item && item.previous_version || null,
+      next_version: item && item.next_version || null,
+      has_previous_version: !!(item && item.previous_version),
+      has_next_version: !!(item && item.next_version),
+      stable_versions_available: stableVersions,
+    };
+  }
+
+  function _operationSummary(event) {
+    return {
+      event_id: event.eventId || null,
+      method: event.method || null,
+      host: event.hostname || null,
+      api_version: event.apiVersion || null,
+      plane: event.plane || "unknown",
+      auth_status: event.specification && event.specification.documentedAuth && event.specification.documentedAuth.status || "unspecified",
+      classification_status: event.classification && event.classification.status || null,
+    };
+  }
+
+  function buildSessionCorrelation(events) {
+    const sourceEvents = (Array.isArray(events) ? events : []).filter(Boolean);
+    const boundedEvents = sourceEvents.slice(0, MAX_CORRELATION_EVENTS);
+    const familyMap = new Map();
+    const resourceMap = new Map();
     const findings = [];
-    for (const group of groups.values()) {
-      if (group.length < 2) continue;
-      const hosts = Array.from(new Set(group.map((event) => event.hostname).filter(Boolean))).sort();
-      const methods = Array.from(new Set(group.map((event) => event.method).filter(Boolean))).sort();
-      const versions = Array.from(new Set(group.map((event) => event.apiVersion).filter(Boolean))).sort();
+    const truncation = {
+      events: sourceEvents.length > boundedEvents.length,
+      families: false,
+      resources: false,
+      findings: false,
+    };
+
+    boundedEvents.forEach((event) => {
+      const familyKey = _familyKey(event);
+      const resourceKey = _correlationKey(event);
+      const apiFamily = event.specification && event.specification.apiFamily || null;
+
+      if (!familyMap.has(familyKey)) {
+        familyMap.set(familyKey, {
+          family_key: familyKey,
+          provider_namespace: event.provider || (apiFamily && apiFamily.provider_namespace) || null,
+          resource_keys: new Set(),
+          parent_resource_keys: new Set(),
+          event_ids: [],
+          hosts: new Set(),
+          planes: new Set(),
+          methods: new Set(),
+          api_versions: new Map(),
+          auth_statuses: new Set(),
+        });
+      }
+      const family = familyMap.get(familyKey);
+      family.resource_keys.add(resourceKey);
+      if (apiFamily && apiFamily.parent_resource_key) family.parent_resource_keys.add(apiFamily.parent_resource_key);
+      family.event_ids.push(event.eventId);
+      if (event.hostname) family.hosts.add(event.hostname);
+      family.planes.add(event.plane || "unknown");
+      if (event.method) family.methods.add(event.method);
+      family.auth_statuses.add(event.specification && event.specification.documentedAuth && event.specification.documentedAuth.status || "unspecified");
+      const versionSummary = _eventVersionSummary(event);
+      if (versionSummary.api_version && !family.api_versions.has(versionSummary.api_version)) {
+        family.api_versions.set(versionSummary.api_version, versionSummary);
+      }
+
+      if (!resourceMap.has(resourceKey)) {
+        resourceMap.set(resourceKey, {
+          resource_key: resourceKey,
+          family_key: familyKey,
+          resource_type_path: apiFamily && apiFamily.resource_type_path || [],
+          parent_resource_key: apiFamily && apiFamily.parent_resource_key || null,
+          event_ids: [],
+          hosts: new Set(),
+          planes: new Set(),
+          methods: new Set(),
+          api_versions: new Map(),
+          auth_statuses: new Set(),
+          documented_methods: new Set(),
+          undocumented_methods: new Set(),
+          operations: [],
+        });
+      }
+      const resource = resourceMap.get(resourceKey);
+      resource.event_ids.push(event.eventId);
+      if (event.hostname) resource.hosts.add(event.hostname);
+      resource.planes.add(event.plane || "unknown");
+      if (event.method) resource.methods.add(event.method);
+      resource.auth_statuses.add(event.specification && event.specification.documentedAuth && event.specification.documentedAuth.status || "unspecified");
+      if (versionSummary.api_version && !resource.api_versions.has(versionSummary.api_version)) {
+        resource.api_versions.set(versionSummary.api_version, versionSummary);
+      }
+      (event.specification && event.specification.availableMethods || []).forEach((method) => resource.documented_methods.add(method));
+      if (event.classification && event.classification.reason === "http_method_not_in_spec" && event.method) {
+        resource.undocumented_methods.add(event.method);
+      }
+      if (resource.operations.length < MAX_CORRELATION_ITEMS) resource.operations.push(_operationSummary(event));
+    });
+
+    for (const resource of resourceMap.values()) {
+      const hosts = _unique(Array.from(resource.hosts), MAX_CORRELATION_ITEMS);
+      const planes = _unique(Array.from(resource.planes), MAX_CORRELATION_ITEMS);
+      const methods = _unique(Array.from(resource.methods), MAX_CORRELATION_ITEMS);
+      const undocumentedMethods = _unique(Array.from(resource.undocumented_methods), MAX_CORRELATION_ITEMS);
+      if (planes.includes("management") && planes.includes("data")) {
+        findings.push({
+          category: "same_resource_observed_on_management_and_data_planes",
+          confidence: "medium",
+          evidence: ["Resource key: " + resource.resource_key, "Planes observed: " + planes.join(", ")],
+          affectedOperations: resource.event_ids.slice(0, MAX_CORRELATION_ITEMS),
+          whyTheDifferenceIsInteresting: "The same structural resource was observed across control-plane and data-plane surfaces.",
+          relevantMetadata: { resourceKey: resource.resource_key, familyKey: resource.family_key, planes, hosts, methods },
+          suggestedNextQuestion: "Do the plane-specific calls use distinct audiences, permissions, and audit boundaries?",
+        });
+      }
       if (hosts.length > 1) {
         findings.push({
-          category: "equivalent_operation_multiple_hosts",
+          category: "same_resource_multiple_hosts",
           confidence: "medium",
           evidence: hosts.map((host) => "Observed host: " + host),
-          affectedOperations: group.map((event) => event.eventId),
-          whyTheDifferenceIsInteresting: "Equivalent normalised operations were observed through multiple hosts or service front doors.",
-          relevantMetadata: { hosts, methods, versions },
+          affectedOperations: resource.event_ids.slice(0, MAX_CORRELATION_ITEMS),
+          whyTheDifferenceIsInteresting: "The same structural resource was observed through multiple hosts or service front doors.",
+          relevantMetadata: { resourceKey: resource.resource_key, familyKey: resource.family_key, hosts, methods, versions: Array.from(resource.api_versions.keys()).sort() },
           suggestedNextQuestion: "Do all host variants enforce the same audience, tenant, and resource authorization boundaries?",
         });
       }
+      if (undocumentedMethods.length) {
+        findings.push({
+          category: "resource_undocumented_observed_verbs",
+          confidence: "high",
+          evidence: undocumentedMethods.map((method) => "Observed undocumented method: " + method),
+          affectedOperations: resource.event_ids.slice(0, MAX_CORRELATION_ITEMS),
+          whyTheDifferenceIsInteresting: "The resource path is known, but at least one observed HTTP verb is absent from the documented sibling operations.",
+          relevantMetadata: {
+            resourceKey: resource.resource_key,
+            observedMethods: methods,
+            documentedMethods: _unique(Array.from(resource.documented_methods), MAX_CORRELATION_ITEMS),
+          },
+          suggestedNextQuestion: "Does the undocumented verb enforce the same authentication, authorization, and resource-boundary checks as documented sibling verbs?",
+        });
+      }
+      for (const version of resource.api_versions.values()) {
+        if (version.stability === "preview" && version.stable_versions_available && version.stable_versions_available.length) {
+          findings.push({
+            category: "preview_version_used_with_stable_available",
+            confidence: "medium",
+            evidence: ["Observed preview api-version: " + version.api_version],
+            affectedOperations: resource.event_ids.slice(0, MAX_CORRELATION_ITEMS),
+            whyTheDifferenceIsInteresting: "A preview API version was observed for a resource with stable documented lineage available in the same session context.",
+            relevantMetadata: {
+              resourceKey: resource.resource_key,
+              familyKey: resource.family_key,
+              apiVersion: version.api_version,
+              previousVersion: version.previous_version,
+              nextVersion: version.next_version,
+              stableVersions: version.stable_versions_available,
+            },
+            suggestedNextQuestion: "Is preview-only behaviour required here, or can the same resource path be compared against a stable documented version?",
+          });
+        }
+      }
     }
-    return findings;
+
+    for (const family of familyMap.values()) {
+      const authStatuses = _unique(Array.from(family.auth_statuses), MAX_CORRELATION_ITEMS);
+      if (authStatuses.length > 1) {
+        findings.push({
+          category: "inconsistent_auth_requirements_across_family",
+          confidence: "medium",
+          evidence: authStatuses.map((status) => "Documented auth status: " + status),
+          affectedOperations: family.event_ids.slice(0, MAX_CORRELATION_ITEMS),
+          whyTheDifferenceIsInteresting: "Sibling operations in the same resource family advertise differing documented authentication requirements.",
+          relevantMetadata: {
+            familyKey: family.family_key,
+            resourceKeys: _unique(Array.from(family.resource_keys), MAX_CORRELATION_ITEMS),
+            authStatuses,
+          },
+          suggestedNextQuestion: "Are the weaker or unspecified sibling requirements intentional for this resource family?",
+        });
+      }
+    }
+
+    const familyGroups = Array.from(familyMap.values()).slice(0, MAX_CORRELATION_GROUPS).map((family) => ({
+      family_key: family.family_key,
+      provider_namespace: family.provider_namespace,
+      resource_keys: _unique(Array.from(family.resource_keys), MAX_CORRELATION_ITEMS),
+      parent_resource_keys: _unique(Array.from(family.parent_resource_keys), MAX_CORRELATION_ITEMS),
+      event_ids: family.event_ids.slice(0, MAX_CORRELATION_ITEMS),
+      hosts: _unique(Array.from(family.hosts), MAX_CORRELATION_ITEMS),
+      planes: _unique(Array.from(family.planes), MAX_CORRELATION_ITEMS),
+      methods: _unique(Array.from(family.methods), MAX_CORRELATION_ITEMS),
+      api_versions: Array.from(family.api_versions.values()).slice(0, MAX_CORRELATION_ITEMS),
+      auth_statuses: _unique(Array.from(family.auth_statuses), MAX_CORRELATION_ITEMS),
+      truncated: family.event_ids.length > MAX_CORRELATION_ITEMS || family.resource_keys.size > MAX_CORRELATION_ITEMS,
+    }));
+    const resourceGroups = Array.from(resourceMap.values()).slice(0, MAX_CORRELATION_GROUPS).map((resource) => ({
+      resource_key: resource.resource_key,
+      family_key: resource.family_key,
+      resource_type_path: resource.resource_type_path.slice(0, 20).map(sanitizeText),
+      parent_resource_key: resource.parent_resource_key,
+      event_ids: resource.event_ids.slice(0, MAX_CORRELATION_ITEMS),
+      hosts: _unique(Array.from(resource.hosts), MAX_CORRELATION_ITEMS),
+      planes: _unique(Array.from(resource.planes), MAX_CORRELATION_ITEMS),
+      methods: _unique(Array.from(resource.methods), MAX_CORRELATION_ITEMS),
+      api_versions: Array.from(resource.api_versions.values()).slice(0, MAX_CORRELATION_ITEMS),
+      auth_statuses: _unique(Array.from(resource.auth_statuses), MAX_CORRELATION_ITEMS),
+      documented_methods: _unique(Array.from(resource.documented_methods), MAX_CORRELATION_ITEMS),
+      operations: resource.operations,
+      truncated: resource.event_ids.length > MAX_CORRELATION_ITEMS,
+    }));
+    truncation.families = familyMap.size > familyGroups.length;
+    truncation.resources = resourceMap.size > resourceGroups.length;
+    truncation.findings = findings.length > MAX_CORRELATION_FINDINGS;
+
+    return {
+      schema_version: RESEARCH_SCHEMA_VERSION,
+      summary: {
+        event_count: boundedEvents.length,
+        family_count: familyMap.size,
+        resource_count: resourceMap.size,
+      },
+      truncation,
+      families: familyGroups,
+      resources: resourceGroups,
+      findings: findings.slice(0, MAX_CORRELATION_FINDINGS),
+    };
+  }
+
+  function correlateEvents(events) {
+    return buildSessionCorrelation(events).findings;
   }
 
   function _isSensitiveFieldName(key) {
@@ -790,11 +1106,12 @@
         ? event.hypotheses
         : { status: "disabled", provider: null, hypotheses: [], error: null },
     }), "event"));
-    const allFindings = events.flatMap((item) => item.findings || findDifferentialFindings(item)).concat(correlateEvents(events));
+    const sessionCorrelation = buildSessionCorrelation(events);
+    const allFindings = events.flatMap((item) => item.findings || findDifferentialFindings(item)).concat(sessionCorrelation.findings);
     const allHypotheses = config.aiEnabled ? events.flatMap((item) => item.hypotheses && item.hypotheses.hypotheses || []) : [];
 
     return {
-      schema_version: "1.1.0",
+      schema_version: RESEARCH_SCHEMA_VERSION,
       session_metadata: {
         exported_at: new Date().toISOString(),
         session_name: sessionName || "apispy-research-session",
@@ -803,6 +1120,7 @@
         truncated: config.captureTruncated || sourceEvents.length > MAX_EVENTS_PER_EXPORT,
       },
       observed_operations: exportedEvents,
+      session_correlation: _sanitizeExportValue(sessionCorrelation, "session_correlation"),
       deterministic_findings: _sanitizeExportValue(allFindings, "findings"),
       hypotheses: _sanitizeExportValue(allHypotheses, "hypotheses"),
       provenance: {
@@ -847,7 +1165,7 @@
     const requestSchema = opts.requestSchema || schemaSummary(opts.requestBodyText);
     const responseSchema = opts.responseSchema || null;
     const event = {
-      schemaVersion: "1.1.0",
+      schemaVersion: RESEARCH_SCHEMA_VERSION,
       eventId,
       timestamp,
       correlationId,
@@ -884,6 +1202,8 @@
         operationIds: Array.isArray(operationMetadata.operation_ids) ? operationMetadata.operation_ids.slice(0, 100).map(_boundedString) : [],
         specFiles: Array.isArray(operationMetadata.spec_files) ? operationMetadata.spec_files.slice(0, 100).map(_boundedString) : [],
         sourceKinds: Array.isArray(operationMetadata.source_kinds) ? operationMetadata.source_kinds.slice(0, 20).map(_boundedString) : [],
+        apiFamily: _copyApiFamily(operationMetadata.api_family),
+        versionLineage: _copyVersionLineage(operationMetadata.version_lineage),
         documentedAuth: operationMetadata.auth || { status: "unspecified", requirements: [], schemes: [] },
         documentedParameters: operationMetadata.parameters || {},
         requestSchemas: Array.isArray(operationMetadata.request_schemas) ? operationMetadata.request_schemas.slice(0, 20) : [],
@@ -932,6 +1252,7 @@
     findDifferentialFindings,
     findDifferentials: findDifferentialFindings,
     correlateEvents,
+    buildSessionCorrelation,
     generateHypotheses,
     generateTestPlans,
     buildModelContext,

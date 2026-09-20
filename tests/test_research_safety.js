@@ -85,6 +85,21 @@ function jwt(payload) {
       reason: "route_not_in_shard",
       provider_namespace: "Microsoft.Example",
       shard_name: "Microsoft.Example",
+      operation_metadata: {
+        api_family: {
+          family_key: "Microsoft.Example/widgets?sig=family-secret",
+          provider_namespace: "Microsoft.Example",
+          resource_type_path: ["widgets"],
+          resource_key: "Microsoft.Example/widgets?client_secret=resource-secret",
+          resource_depth: 1,
+        },
+        version_lineage: {
+          ordered_versions: [
+            { api_version: "2024-01-01-preview?token=lineage-secret", stability: "preview", next_version: "2024-06-01" },
+            { api_version: "2024-06-01", stability: "stable", previous_version: "2024-01-01-preview?token=lineage-secret" },
+          ],
+        },
+      },
     },
   });
   const context = Research.buildModelContext(event);
@@ -95,6 +110,9 @@ function jwt(payload) {
   assert(serializedContext.includes(bearer) === false, "raw bearer token cannot reach provider input");
   assert(serializedContext.includes("secret-value-123") === false, "cookie secret cannot reach provider input");
   assert(serializedContext.includes("body-secret-value") === false, "body secret cannot reach provider input");
+  assert(serializedContext.includes("family-secret") === false, "api_family secret-like values cannot reach provider input");
+  assert(serializedContext.includes("resource-secret") === false, "resource_key secret-like values cannot reach provider input");
+  assert(serializedContext.includes("lineage-secret") === false, "version_lineage secret-like values cannot reach provider input");
   assert(event.requestSchemaFingerprint.startsWith("json-shape-fnv1a32:"), "request body contributes only a structural fingerprint");
   assert(JSON.stringify(event).includes("body-secret-value") === false, "request body secret is not retained");
 
@@ -132,6 +150,9 @@ function jwt(payload) {
   assert(serialized.includes("secret-value-123") === false, "cookie secret cannot reach export");
   assert(serialized.includes("referer-secret-code") === false, "nested header credential cannot reach export");
   assert(serialized.includes("body-secret-value") === false, "body secret cannot reach export");
+  assert(serialized.includes("family-secret") === false, "api_family secret-like values cannot reach export");
+  assert(serialized.includes("resource-secret") === false, "resource_key secret-like values cannot reach export");
+  assert(serialized.includes("lineage-secret") === false, "version_lineage secret-like values cannot reach export");
   assert(exported.hypotheses[0].test_plans[0].requires_manual_approval === true, "exported test plan requires approval");
   assert(exported.hypotheses[0].test_plans[0].execution === "not_supported", "exported test plan cannot execute");
   const truncatedExport = Research.exportSession("truncated", [event], { captureTruncated: true });

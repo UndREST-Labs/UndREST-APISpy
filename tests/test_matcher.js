@@ -52,6 +52,19 @@ const MOCK_SHARD = {
           path_template: "/subscriptions/{subscriptionId}/providers/Microsoft.FakeProvider/operations",
           provider_namespace: "Microsoft.FakeProvider",
           plane: "management",
+          api_family: {
+            family_key: "Microsoft.FakeProvider/operations",
+            provider_namespace: "Microsoft.FakeProvider",
+            resource_type_path: ["operations"],
+            resource_key: "Microsoft.FakeProvider/operations",
+            resource_depth: 1,
+          },
+          version_lineage: {
+            ordered_versions: [
+              { api_version: "2023-01-01", stability: "stable", next_version: "2024-01-01" },
+              { api_version: "2024-01-01", stability: "stable", previous_version: "2023-01-01" },
+            ],
+          },
           versions: {
             "2024-01-01": {
               is_preview: false,
@@ -144,6 +157,8 @@ console.log("\n=== Matcher.classify — exact match ===");
   eq(r.operation_metadata.auth.status, "required", "documented auth status returned from 3.1 shard");
   assert(r.operation_metadata.parameters.query.includes("expand"), "documented query parameter returned from 3.1 shard");
   eq(r.operation_metadata.response_schemas[0].fingerprint, "sha256:response", "documented response fingerprint returned from 3.1 shard");
+  eq(r.operation_metadata.api_family.family_key, "Microsoft.FakeProvider/operations", "SpecQL 3.2 api_family returned additively");
+  eq(r.operation_metadata.version_lineage.ordered_versions[0].api_version, "2023-01-01", "SpecQL 3.2 version_lineage returned additively");
 }
 
 console.log("\n=== Matcher.classify — route match, version mismatch ===");
@@ -155,6 +170,35 @@ console.log("\n=== Matcher.classify — route match, version mismatch ===");
   const r = Matcher.classify(n, MOCK_SHARD, { inScope: true });
   eq(r.status, Matcher.STATUS.ROUTE_MISMATCH, "route_match_version_mismatch status");
   assert(r.matched_versions.includes("2024-01-01"), "matched_versions contains known version");
+  eq(r.operation_metadata.api_family.resource_key, "Microsoft.FakeProvider/operations", "api_family returned on version mismatch");
+}
+
+console.log("\n=== Matcher.classify — SpecQL 3.1/3.0 shards omit 3.2 metadata gracefully ===");
+{
+  const n = norm(
+    "https://management.azure.com/subscriptions/12345678-1234-1234-1234-123456789abc/providers/Microsoft.FakeProvider/legacy?api-version=2023-01-01",
+    "GET"
+  );
+  const oldShard = {
+    metadata: { provider_namespace: "Microsoft.FakeProvider" },
+    provider_namespace: "Microsoft.FakeProvider",
+    hosts: {
+      "management.azure.com": {
+        routes: {
+          "GET /subscriptions/{guid}/providers/Microsoft.FakeProvider/legacy": {
+            method: "GET",
+            path_template: "/subscriptions/{subscriptionId}/providers/Microsoft.FakeProvider/legacy",
+            provider_namespace: "Microsoft.FakeProvider",
+            versions: { "2023-01-01": { is_preview: false, spec_files: ["fake/legacy.json"] } },
+          },
+        },
+      },
+    },
+  };
+  const r = Matcher.classify(n, oldShard, { inScope: true });
+  eq(r.status, Matcher.STATUS.EXACT_MATCH, "older shard exact match still succeeds");
+  eq(r.operation_metadata.api_family, null, "missing api_family is null");
+  eq(r.operation_metadata.version_lineage, null, "missing version_lineage is null");
 }
 
 console.log("\n=== Matcher.classify — provider known, route unknown ===");

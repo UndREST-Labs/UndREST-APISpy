@@ -92,11 +92,12 @@ A minimal research event contains:
 - method + hostname + normalised path + original path
 - sanitised query parameters
 - SpecQL classification state (exact, version mismatch, provider known, portal-only candidate, unknown)
+- optional SpecQL resource-family / version-lineage context and bounded session correlation
 - deterministic differential findings
 - model-generated hypotheses in a strict machine-readable schema
 - provenance and redaction status
 
-Use **AI: Off / AI: Local** to control hypothesis generation and **Save Research** to export sanitised JSON. Generated test plans are descriptions only and always carry `requires_manual_approval: true` plus `execution: "not_supported"`.
+Use **AI: Off / AI: Local** to control hypothesis generation and **Save Research** to export sanitised JSON. Generated test plans are descriptions only and always carry `requires_manual_approval: true` plus `execution: "not_supported"`. SpecQL 3.2.0 shards can add resource-family hierarchy and version-lineage metadata for deterministic session correlation; older 3.1.0/3.0.0 shards continue to load without those optional fields.
 
 See [`docs/RESEARCH_ARCHITECTURE.md`](../docs/RESEARCH_ARCHITECTURE.md) for the event schema, data flow, component ownership, and phased roadmap.
 
@@ -405,4 +406,3 @@ If `azure-provider-ops.json` is absent or fails to load, the enrichment module i
 
 APISpy does **not** modify the SpeQL export pipeline.  It consumes the
 already-produced output files.
-

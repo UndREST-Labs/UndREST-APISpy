@@ -752,6 +752,35 @@ function showDetail(entry) {
     _addDetailRow(sectionResearch, "Sanitised query", JSON.stringify(research.query || {}));
     _addDetailRow(sectionResearch, "Operation IDs", research.specification && research.specification.operationIds ? research.specification.operationIds.join(", ") : "");
     _addDetailRow(sectionResearch, "Plane", research.plane || "unknown");
+    if (research.specification && research.specification.apiFamily) {
+      const family = research.specification.apiFamily;
+      _addDetailRow(sectionResearch, "API family", family.family_key || "");
+      _addDetailRow(sectionResearch, "Resource key", family.resource_key || "");
+      if (family.parent_resource_key) {
+        _addDetailRow(sectionResearch, "Parent resource", family.parent_resource_key);
+      }
+    }
+    if (research.specification && research.specification.versionLineage && research.specification.versionLineage.ordered_versions) {
+      const lineage = research.specification.versionLineage.ordered_versions.map((item) =>
+        item.api_version + " (" + item.stability + ")"
+      ).join(", ");
+      _addDetailRow(sectionResearch, "Version lineage", lineage, { multiline: true });
+    }
+    if (typeof Research !== "undefined" && Research.buildSessionCorrelation) {
+      const correlation = Research.buildSessionCorrelation(state.requests.map((request) => request.research).filter(Boolean));
+      const resourceKey = research.specification && research.specification.apiFamily && research.specification.apiFamily.resource_key;
+      const resourceGroup = correlation.resources.find((item) => item.resource_key === resourceKey);
+      if (resourceGroup) {
+        _addDetailRow(sectionResearch, "Session correlation", [
+          "hosts=" + resourceGroup.hosts.join(", "),
+          "planes=" + resourceGroup.planes.join(", "),
+          "methods=" + resourceGroup.methods.join(", "),
+        ].join(" | "), { multiline: true });
+      }
+      if (correlation.findings.length) {
+        _addDetailRow(sectionResearch, "Correlation findings", correlation.findings.map((f) => f.category + " (" + f.confidence + ")").join(", "), { multiline: true });
+      }
+    }
     if (research.findings && research.findings.length) {
       _addDetailRow(sectionResearch, "Differentials", research.findings.map((f) => f.category + " (" + f.confidence + ")").join(", "));
       _addDetailRow(sectionResearch, "Next questions", research.findings.map((f) => f.suggestedNextQuestion).join(" | "), { multiline: true });

@@ -616,6 +616,8 @@
       method: routeDef.method || null,
       path_template: routeDef.path_template || null,
       plane: routeDef.plane || null,
+      api_family: _copyApiFamily(routeDef.api_family),
+      version_lineage: _copyVersionLineage(routeDef.version_lineage),
       operation_ids: collect("operation_ids"),
       spec_files: collect("spec_files"),
       source_kinds: collect("source_kinds"),
@@ -632,6 +634,54 @@
       request_schemas: collectObjects("request_schemas", 20),
       response_schemas: collectObjects("response_schemas", 50),
     };
+  }
+
+  function _boundedString(value, maxLength) {
+    const text = value === null || value === undefined ? "" : String(value);
+    return text.length > maxLength ? text.slice(0, maxLength) + "[TRUNCATED]" : text;
+  }
+
+  function _boundedStringArray(values, limit) {
+    if (!Array.isArray(values)) return [];
+    return values.slice(0, limit).map((value) => _boundedString(value, 200));
+  }
+
+  function _copyApiFamily(apiFamily) {
+    if (!apiFamily || typeof apiFamily !== "object") return null;
+    const resourceTypePath = _boundedStringArray(apiFamily.resource_type_path, 20);
+    const parentPath = _boundedStringArray(apiFamily.parent_resource_type_path, 20);
+    const copied = {
+      family_key: apiFamily.family_key ? _boundedString(apiFamily.family_key, 300) : null,
+      provider_namespace: apiFamily.provider_namespace ? _boundedString(apiFamily.provider_namespace, 200) : null,
+      resource_type_path: resourceTypePath,
+      resource_key: apiFamily.resource_key ? _boundedString(apiFamily.resource_key, 500) : null,
+      resource_depth: Number.isFinite(apiFamily.resource_depth) ? apiFamily.resource_depth : resourceTypePath.length,
+    };
+    if (parentPath.length) copied.parent_resource_type_path = parentPath;
+    if (apiFamily.parent_resource_key) copied.parent_resource_key = _boundedString(apiFamily.parent_resource_key, 500);
+    if (apiFamily.resource_type_path_truncated === true) copied.resource_type_path_truncated = true;
+    return copied;
+  }
+
+  function _copyVersionLineage(versionLineage) {
+    if (!versionLineage || typeof versionLineage !== "object") return null;
+    const ordered = Array.isArray(versionLineage.ordered_versions)
+      ? versionLineage.ordered_versions.slice(0, 100).map((item) => {
+        const copied = {
+          api_version: item && item.api_version ? _boundedString(item.api_version, 100) : null,
+          stability: item && ["preview", "stable", "unknown"].includes(item.stability) ? item.stability : "unknown",
+        };
+        if (item && item.previous_version) copied.previous_version = _boundedString(item.previous_version, 100);
+        if (item && item.next_version) copied.next_version = _boundedString(item.next_version, 100);
+        return copied;
+      }).filter((item) => item.api_version)
+      : [];
+    if (!ordered.length) return null;
+    const copied = { ordered_versions: ordered };
+    if (versionLineage.versions_truncated === true || (Array.isArray(versionLineage.ordered_versions) && versionLineage.ordered_versions.length > ordered.length)) {
+      copied.versions_truncated = true;
+    }
+    return copied;
   }
 
   /**

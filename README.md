@@ -79,9 +79,9 @@ Use the filter controls to narrow by provider, status, or path pattern. Export t
 
 APISpy can derive sanitised research events and deterministic observed-vs-documented findings from classified traffic. The request detail panel shows this context without changing the normal request table. Optional hypothesis generation is disabled by default and currently uses a deterministic local adapter; it never issues API requests or controls browser actions.
 
-Use **AI: Off / AI: Local** to opt in or out, and **Save Research** to export a portable JSON session containing sanitised events, findings, optional hypotheses, bounded non-executable test plans, provenance, and redaction status.
+Use **AI: Off / AI: Local** to opt in or out, and **Save Research** to export a portable JSON session containing sanitised events, bounded session correlation, findings, optional hypotheses, bounded non-executable test plans, provenance, and redaction status.
 
-Raw bearer tokens, cookies, SAS signatures, API keys, client secrets, authentication codes, refresh tokens, and request/response bodies are excluded from research persistence, provider input, and research exports. When additive SpecQL 3.1.0 metadata is available, APISpy also compares documented query parameters and schema field summaries; existing 3.0.0 shards remain supported. See [Research architecture](docs/RESEARCH_ARCHITECTURE.md) for schema, trust boundaries, and the SpecQL/APISpy ownership split.
+Raw bearer tokens, cookies, SAS signatures, API keys, client secrets, authentication codes, refresh tokens, and request/response bodies are excluded from research persistence, provider input, and research exports. When additive SpecQL 3.1.0/3.2.0 metadata is available, APISpy also compares documented query parameters, schema field summaries, resource-family hierarchy, and version lineage; existing 3.0.0 shards remain supported. See [Research architecture](docs/RESEARCH_ARCHITECTURE.md) for schema, trust boundaries, and the SpecQL/APISpy ownership split.
 
 ## API Packs
 
