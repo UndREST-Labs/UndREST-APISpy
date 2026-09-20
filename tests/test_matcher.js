@@ -51,9 +51,36 @@ const MOCK_SHARD = {
           method: "GET",
           path_template: "/subscriptions/{subscriptionId}/providers/Microsoft.FakeProvider/operations",
           provider_namespace: "Microsoft.FakeProvider",
+          plane: "management",
+          api_family: {
+            family_key: "Microsoft.FakeProvider/operations",
+            provider_namespace: "Microsoft.FakeProvider",
+            resource_type_path: ["operations"],
+            resource_key: "Microsoft.FakeProvider/operations",
+            resource_depth: 1,
+          },
+          version_lineage: {
+            ordered_versions: [
+              { api_version: "2023-01-01", stability: "stable", next_version: "2024-01-01" },
+              { api_version: "2024-01-01", stability: "stable", previous_version: "2023-01-01" },
+            ],
+          },
           versions: {
-            "2024-01-01": { is_preview: false, spec_files: ["fake/2024-01-01/fake.json"] },
-            "2023-01-01": { is_preview: false, spec_files: ["fake/2023-01-01/fake.json"] },
+            "2024-01-01": {
+              is_preview: false,
+              spec_files: ["fake/2024-01-01/fake.json"],
+              operation_ids: ["Operations_List"],
+              source_kinds: ["paths"],
+              auth: {
+                status: "required",
+                requirements: [{ oauth2: ["Operations.Read"] }],
+                schemes: [{ name: "oauth2", type: "oauth2" }],
+              },
+              parameters: { query: ["api-version", "expand"], path: ["subscriptionId"] },
+              request_schemas: [],
+              response_schemas: [{ fingerprint: "sha256:response", type: "object", top_level_fields: [{ name: "value", type: "array", required: true }], status_codes: ["200"] }],
+            },
+            "2023-01-01": { is_preview: false, spec_files: ["fake/2023-01-01/fake.json"], operation_ids: ["Operations_ListLegacy"], source_kinds: ["paths"] },
           },
         },
       },
@@ -125,6 +152,13 @@ console.log("\n=== Matcher.classify — exact match ===");
   eq(r.provider_namespace, "Microsoft.FakeProvider", "correct provider_namespace");
   eq(r.matched_version, "2024-01-01", "correct matched_version");
   assert(Array.isArray(r.matched_versions), "matched_versions is array");
+  eq(r.operation_metadata.plane, "management", "operation plane returned additively");
+  assert(r.operation_metadata.operation_ids.includes("Operations_List"), "matched operation ID returned");
+  eq(r.operation_metadata.auth.status, "required", "documented auth status returned from 3.1 shard");
+  assert(r.operation_metadata.parameters.query.includes("expand"), "documented query parameter returned from 3.1 shard");
+  eq(r.operation_metadata.response_schemas[0].fingerprint, "sha256:response", "documented response fingerprint returned from 3.1 shard");
+  eq(r.operation_metadata.api_family.family_key, "Microsoft.FakeProvider/operations", "SpecQL 3.2 api_family returned additively");
+  eq(r.operation_metadata.version_lineage.ordered_versions[0].api_version, "2023-01-01", "SpecQL 3.2 version_lineage returned additively");
 }
 
 console.log("\n=== Matcher.classify — route match, version mismatch ===");
@@ -136,6 +170,35 @@ console.log("\n=== Matcher.classify — route match, version mismatch ===");
   const r = Matcher.classify(n, MOCK_SHARD, { inScope: true });
   eq(r.status, Matcher.STATUS.ROUTE_MISMATCH, "route_match_version_mismatch status");
   assert(r.matched_versions.includes("2024-01-01"), "matched_versions contains known version");
+  eq(r.operation_metadata.api_family.resource_key, "Microsoft.FakeProvider/operations", "api_family returned on version mismatch");
+}
+
+console.log("\n=== Matcher.classify — SpecQL 3.1/3.0 shards omit 3.2 metadata gracefully ===");
+{
+  const n = norm(
+    "https://management.azure.com/subscriptions/12345678-1234-1234-1234-123456789abc/providers/Microsoft.FakeProvider/legacy?api-version=2023-01-01",
+    "GET"
+  );
+  const oldShard = {
+    metadata: { provider_namespace: "Microsoft.FakeProvider" },
+    provider_namespace: "Microsoft.FakeProvider",
+    hosts: {
+      "management.azure.com": {
+        routes: {
+          "GET /subscriptions/{guid}/providers/Microsoft.FakeProvider/legacy": {
+            method: "GET",
+            path_template: "/subscriptions/{subscriptionId}/providers/Microsoft.FakeProvider/legacy",
+            provider_namespace: "Microsoft.FakeProvider",
+            versions: { "2023-01-01": { is_preview: false, spec_files: ["fake/legacy.json"] } },
+          },
+        },
+      },
+    },
+  };
+  const r = Matcher.classify(n, oldShard, { inScope: true });
+  eq(r.status, Matcher.STATUS.EXACT_MATCH, "older shard exact match still succeeds");
+  eq(r.operation_metadata.api_family, null, "missing api_family is null");
+  eq(r.operation_metadata.version_lineage, null, "missing version_lineage is null");
 }
 
 console.log("\n=== Matcher.classify — provider known, route unknown ===");
@@ -751,6 +814,15 @@ console.log("\n=== Matcher.isArmRootPath ===");
   // correct: the caller uses isArmRootPath only when no provider was inferred)
   assert(Matcher.isArmRootPath(mkNorm("/subscriptions/abc/providers/Microsoft.Compute/virtualMachines")),
     "isArmRootPath is first-segment only; provider inference handles the rest");
+}
+
+console.log("\n=== Matcher.classify — Microsoft Graph without bundled shard ===");
+{
+  const n = norm("https://graph.microsoft.com/v1.0/users/42", "GET");
+  const r = Matcher.classify(n, null, { inScope: true });
+  eq(r.status, Matcher.STATUS.NO_SPEC_MATCH, "Graph request without shard is a safe no-spec match");
+  eq(r.reason, "no_provider_inferred", "Graph request does not fabricate a provider namespace");
+  eq(r.provider_namespace, null, "Graph request without shard keeps provider namespace null");
 }
 
 console.log("\n=== Matcher.classify — ARM_ROOT_ROUTE: /subscriptions ===");

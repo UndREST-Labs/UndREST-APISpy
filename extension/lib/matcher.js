@@ -581,6 +581,109 @@
     return index;
   }
 
+  function _operationMetadata(routeDef, apiVersion) {
+    const versions = routeDef.versions || {};
+    const selected = apiVersion && versions[apiVersion]
+      ? [versions[apiVersion]]
+      : Object.keys(versions).sort().map((version) => versions[version]);
+    const collect = (field) => Array.from(new Set(selected.flatMap((item) =>
+      item && Array.isArray(item[field]) ? item[field] : []
+    ))).sort();
+    const collectObjects = (field, limit) => {
+      const keyed = new Map();
+      selected.forEach((item) => {
+        const values = item && Array.isArray(item[field]) ? item[field] : [];
+        values.forEach((value) => {
+          if (!value || typeof value !== "object") return;
+          const key = JSON.stringify(value);
+          if (!keyed.has(key)) keyed.set(key, value);
+        });
+      });
+      return Array.from(keyed.keys()).sort().slice(0, limit).map((key) => keyed.get(key));
+    };
+    const parameters = {};
+    selected.forEach((item) => {
+      const source = item && item.parameters && typeof item.parameters === "object" ? item.parameters : {};
+      Object.keys(source).sort().forEach((location) => {
+        if (!Array.isArray(source[location])) return;
+        parameters[location] = Array.from(new Set((parameters[location] || []).concat(source[location]))).sort().slice(0, 100);
+      });
+    });
+    const authStatuses = Array.from(new Set(selected.map((item) =>
+      item && item.auth && typeof item.auth.status === "string" ? item.auth.status : "unspecified"
+    ).filter((status) => status !== "unspecified"))).sort();
+    return {
+      method: routeDef.method || null,
+      path_template: routeDef.path_template || null,
+      plane: routeDef.plane || null,
+      api_family: _copyApiFamily(routeDef.api_family),
+      version_lineage: _copyVersionLineage(routeDef.version_lineage),
+      operation_ids: collect("operation_ids"),
+      spec_files: collect("spec_files"),
+      source_kinds: collect("source_kinds"),
+      auth: {
+        status: authStatuses.length === 0 ? "unspecified" : (authStatuses.length === 1 ? authStatuses[0] : "mixed"),
+        requirements: Array.from(new Map(selected.flatMap((item) =>
+          item && item.auth && Array.isArray(item.auth.requirements) ? item.auth.requirements : []
+        ).map((value) => [JSON.stringify(value), value])).values()).slice(0, 50),
+        schemes: Array.from(new Map(selected.flatMap((item) =>
+          item && item.auth && Array.isArray(item.auth.schemes) ? item.auth.schemes : []
+        ).map((value) => [JSON.stringify(value), value])).values()).slice(0, 50),
+      },
+      parameters,
+      request_schemas: collectObjects("request_schemas", 20),
+      response_schemas: collectObjects("response_schemas", 50),
+    };
+  }
+
+  function _boundedString(value, maxLength) {
+    const text = value === null || value === undefined ? "" : String(value);
+    return text.length > maxLength ? text.slice(0, maxLength) + "[TRUNCATED]" : text;
+  }
+
+  function _boundedStringArray(values, limit) {
+    if (!Array.isArray(values)) return [];
+    return values.slice(0, limit).map((value) => _boundedString(value, 200));
+  }
+
+  function _copyApiFamily(apiFamily) {
+    if (!apiFamily || typeof apiFamily !== "object") return null;
+    const resourceTypePath = _boundedStringArray(apiFamily.resource_type_path, 20);
+    const parentPath = _boundedStringArray(apiFamily.parent_resource_type_path, 20);
+    const copied = {
+      family_key: apiFamily.family_key ? _boundedString(apiFamily.family_key, 300) : null,
+      provider_namespace: apiFamily.provider_namespace ? _boundedString(apiFamily.provider_namespace, 200) : null,
+      resource_type_path: resourceTypePath,
+      resource_key: apiFamily.resource_key ? _boundedString(apiFamily.resource_key, 500) : null,
+      resource_depth: Number.isFinite(apiFamily.resource_depth) ? apiFamily.resource_depth : resourceTypePath.length,
+    };
+    if (parentPath.length) copied.parent_resource_type_path = parentPath;
+    if (apiFamily.parent_resource_key) copied.parent_resource_key = _boundedString(apiFamily.parent_resource_key, 500);
+    if (apiFamily.resource_type_path_truncated === true) copied.resource_type_path_truncated = true;
+    return copied;
+  }
+
+  function _copyVersionLineage(versionLineage) {
+    if (!versionLineage || typeof versionLineage !== "object") return null;
+    const ordered = Array.isArray(versionLineage.ordered_versions)
+      ? versionLineage.ordered_versions.slice(0, 100).map((item) => {
+        const copied = {
+          api_version: item && item.api_version ? _boundedString(item.api_version, 100) : null,
+          stability: item && ["preview", "stable", "unknown"].includes(item.stability) ? item.stability : "unknown",
+        };
+        if (item && item.previous_version) copied.previous_version = _boundedString(item.previous_version, 100);
+        if (item && item.next_version) copied.next_version = _boundedString(item.next_version, 100);
+        return copied;
+      }).filter((item) => item.api_version)
+      : [];
+    if (!ordered.length) return null;
+    const copied = { ordered_versions: ordered };
+    if (versionLineage.versions_truncated === true || (Array.isArray(versionLineage.ordered_versions) && versionLineage.ordered_versions.length > ordered.length)) {
+      copied.versions_truncated = true;
+    }
+    return copied;
+  }
+
   /**
    * Resolve a match result for a found route entry against the request's
    * api-version.
@@ -605,6 +708,7 @@
         matched_versions:    versions,
         reason:              "no_api_version_in_request",
         shard_name:          providerNamespace,
+        operation_metadata:  _operationMetadata(routeDef, null),
       });
     }
 
@@ -616,6 +720,7 @@
         matched_version:     apiVersion,
         shard_name:          providerNamespace,
         reason:              "exact",
+        operation_metadata:  _operationMetadata(routeDef, apiVersion),
       });
     }
 
@@ -625,6 +730,7 @@
       matched_versions:    versions,
       reason:              "api_version_not_in_spec",
       shard_name:          providerNamespace,
+      operation_metadata:  _operationMetadata(routeDef, null),
     });
   }
 
@@ -1156,6 +1262,7 @@
         matched_version:    null,
         available_methods:  null,
         shard_name:         null,
+        operation_metadata: null,
         reason:             null,
         error:              null,
       },

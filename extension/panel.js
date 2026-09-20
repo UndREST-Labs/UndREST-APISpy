@@ -20,6 +20,15 @@ const ALL_STATUSES = Object.freeze([
 ]);
 
 const DEFAULT_DETAIL_HEIGHT = 220; // px
+const RESEARCH_AI_ENABLED_KEY = "apispy_research_ai_enabled";
+
+function readAiEnabledPreference() {
+  try {
+    return localStorage.getItem(RESEARCH_AI_ENABLED_KEY) === "1";
+  } catch (_) {
+    return false;
+  }
+}
 
 /** CSV column headers (must match entryToCsvRow order). */
 const CSV_HEADER = [
@@ -79,6 +88,8 @@ const state = {
    * @type {boolean}
    */
   quickFilterProviderKnown: false,
+  /** AI hypothesis generation is explicit opt-in and uses only the local mock adapter. */
+  aiEnabled: readAiEnabledPreference(),
 };
 
 // ── DOM refs ─────────────────────────────────────────────────────────────────
@@ -92,6 +103,8 @@ const btnAutoscroll  = document.getElementById("btn-autoscroll");
 const btnPacks       = document.getElementById("btn-packs");
 const btnCopyAll     = document.getElementById("btn-copy-all");
 const btnCsv         = document.getElementById("btn-csv");
+const btnAi          = document.getElementById("btn-ai");
+const btnResearchJson = document.getElementById("btn-research-json");
 const emptyState     = document.getElementById("empty-state");
 const detailPanel    = document.getElementById("detail-panel");
 const detailResizer  = document.getElementById("detail-resizer");
@@ -117,6 +130,7 @@ const btnQfProviderKnown = document.getElementById("btn-qf-provider-known");
 
 async function init() {
   setStatus("Loading index...");
+  updateAiButton();
 
   // Start loading Azure enrichment data in the background (optional — the
   // extension works correctly if this file is absent).
@@ -203,16 +217,33 @@ let _restoreComplete = false;
 // ── localStorage persistence (for automated CSV export) ───────────────────────
 
 /**
- * Persist state.requests to localStorage so a standalone panel.html page can
- * read and export the data after a Playwright sweep without needing DevTools.
- * Only active when the sweep script has set the `apispy_sweep_mode` flag.
+ * Persist only the compact, sanitised fields needed by standalone rendering.
+ * Raw HAR data, request bodies, credentials, and live secret-bearing URLs never
+ * cross the persistence boundary.
  */
+function _persistableEntry(entry) {
+  return {
+    idx: entry.idx,
+    time: entry.time,
+    url: typeof Research !== "undefined" ? Research.sanitizeUrl(entry.url) : null,
+    method: entry.method,
+    host: entry.host,
+    pathname: entry.pathname,
+    normPath: entry.normPath,
+    apiVersion: entry.apiVersion,
+    isBatchSub: !!entry.isBatchSub,
+    batchName: entry.batchName != null ? String(entry.batchName) : null,
+    result: entry.result,
+    research: entry.research || null,
+  };
+}
+
 function _persistRequests() {
   if (localStorage.getItem("apispy_sweep_mode") !== "1") return;
   try {
-    localStorage.setItem("apispy_requests", JSON.stringify(state.requests));
+    localStorage.setItem("apispy_requests", JSON.stringify(state.requests.slice(-5000).map(_persistableEntry)));
   } catch (_) {
-    // Quota exceeded or private-browsing restrictions — silently ignore.
+    flashStatus("Research persistence skipped: browser storage unavailable", 3000);
   }
 }
 
@@ -270,7 +301,8 @@ function _restoreFromProcessedEntries() {
   updateCountBadge();
 
   if (state.requests.length > 0) {
-    setStatus("Restored " + state.requests.length + " entry(s) from sweep.");
+    const truncated = localStorage.getItem("apispy_sweep_truncated") === "1";
+    setStatus("Restored " + state.requests.length + " entry(s) from sweep" + (truncated ? " (older entries truncated)." : "."));
   }
 }
 
@@ -301,9 +333,9 @@ async function onRequestFinished(req) {
 
   // Record entries where a provider namespace was identified, or entries for
   // ARM root routes (valid ARM endpoints with no provider namespace such as
-  // /subscriptions or /tenants).  Skip out-of-scope and no-spec-match entries.
-  if (entry.result.provider_namespace !== null ||
-      entry.result.status === Matcher.STATUS.ARM_ROOT_ROUTE) {
+  // /subscriptions or /tenants), or supported Graph requests awaiting an
+  // authoritative pack. Skip other out-of-scope and no-spec-match entries.
+  if (RequestPipeline.shouldRetain(entry.result, norm)) {
     state.requests.push(entry);
     renderRow(entry, state.requests.length - 1);
     updateCountBadge();
@@ -370,9 +402,8 @@ async function expandBatchSubRequests(req) {
  * @property {string|null} apiVersion
  * @property {boolean} [isBatchSub]  True when this row originated from a batch sub-request.
  * @property {string|null} [batchName]  Name/index of the sub-request within the batch.
- * @property {object}  norm
  * @property {object}  result
- * @property {object}  raw
+ * @property {object|null} research  Sanitised research event.
  */
 
 /**
@@ -388,26 +419,9 @@ async function buildEntry(req, norm, scope) {
     ? new Date(req.startedDateTime).toLocaleTimeString()
     : "--:--:--";
 
-  let result;
-  if (!scope.inScope) {
-    result = Matcher.classify(norm, null, { inScope: false });
-  } else if (!norm.ok) {
-    result = Matcher.classify(norm, null, { inScope: true });
-  } else {
-    // Infer provider namespace and load shard lazily
-    const ns = Matcher.inferProviderNamespace(norm.pathname);
-    let shard = null;
-    let shardLoadError = null;
-    if (ns) {
-      try {
-        shard = await Loader.loadShard(ns);
-      } catch (err) {
-        shardLoadError = err && err.message ? err.message : String(err);
-        shard = null;
-      }
-    }
-    result = Matcher.classify(norm, shard, { inScope: true, shardLoadError });
-  }
+  const classified = await RequestPipeline.classifyRequest(norm, scope);
+  const result = classified.result;
+  const packId = classified.packId;
 
   // ── Azure enrichment (Azure pack only, optional) ──────────────────────────
   // Attempt enrichment for any in-scope, normalised request.  If enrichment
@@ -454,6 +468,37 @@ async function buildEntry(req, norm, scope) {
     enrichmentAttempted,
   };
 
+  let research = null;
+  if (typeof Research !== "undefined" && Research && typeof Research.buildResearchEvent === "function") {
+    const responseSchema = await Research.responseSchemaSummary(req);
+    research = Research.buildResearchEvent({
+      url: (req.request && req.request.url) || null,
+      method: (req.request && req.request.method) || (norm && norm.method) || "GET",
+      timestamp: req.startedDateTime || new Date().toISOString(),
+      source: "interactive",
+      packId,
+      norm,
+      result,
+      headers: (req.request && req.request.headers) || [],
+      requestBodyText: req.request && req.request.postData && req.request.postData.text,
+      responseStatus: req.response && req.response.status,
+      responseContentType: Research.getHeader(req.response && req.response.headers, "content-type"),
+      responseSchema,
+    });
+    research.hypotheses = await Research.runHypothesisProvider(
+      Research.mockLocalAdapter,
+      research,
+      { enabled: state.aiEnabled }
+    );
+    if (research.hypotheses.hypotheses.length) {
+      research.hypotheses.hypotheses.forEach((hypothesis) => {
+        if (!hypothesis.test_plans || hypothesis.test_plans.length === 0) {
+          hypothesis.test_plans = Research.generateTestPlans(research, [hypothesis]);
+        }
+      });
+    }
+  }
+
   return {
     idx,
     time,
@@ -463,9 +508,8 @@ async function buildEntry(req, norm, scope) {
     pathname:   norm.ok ? norm.pathname : "?",
     normPath:   norm.ok ? norm.normalisedPath : "?",
     apiVersion: norm.ok ? norm.apiVersion : null,
-    norm,
     result,
-    raw: req,
+    research,
   };
 }
 
@@ -678,7 +722,62 @@ function showDetail(entry) {
     detailFields.appendChild(sectionInsight);
   }
 
-  // ── D. Diagnostics (collapsed by default) ─────────────────────────────────
+  // ── D. Research (sanitised, deterministic, model-advisory) ───────────────
+  if (entry.research) {
+    const research = entry.research;
+    const sectionResearch = _makeDetailSection("Research", { collapsible: true, collapsed: true });
+    _addDetailRow(sectionResearch, "State", research.classification && (research.classification.state || research.classification.status) ? (research.classification.state || research.classification.status) : "unknown");
+    _addDetailRow(sectionResearch, "Auth context", research.auth && research.auth.jwtMetadata ? JSON.stringify(research.auth.jwtMetadata) : "none");
+    _addDetailRow(sectionResearch, "Sanitised query", JSON.stringify(research.query || {}));
+    _addDetailRow(sectionResearch, "Operation IDs", research.specification && research.specification.operationIds ? research.specification.operationIds.join(", ") : "");
+    _addDetailRow(sectionResearch, "Plane", research.plane || "unknown");
+    if (research.specification && research.specification.apiFamily) {
+      const family = research.specification.apiFamily;
+      _addDetailRow(sectionResearch, "API family", family.family_key || "");
+      _addDetailRow(sectionResearch, "Resource key", family.resource_key || "");
+      if (family.parent_resource_key) {
+        _addDetailRow(sectionResearch, "Parent resource", family.parent_resource_key);
+      }
+    }
+    if (research.specification && research.specification.versionLineage && research.specification.versionLineage.ordered_versions) {
+      const lineage = research.specification.versionLineage.ordered_versions.map((item) =>
+        item.api_version + " (" + item.stability + ")"
+      ).join(", ");
+      _addDetailRow(sectionResearch, "Version lineage", lineage, { multiline: true });
+    }
+    if (typeof Research !== "undefined" && Research.buildSessionCorrelation) {
+      const correlation = Research.buildSessionCorrelation(state.requests.map((request) => request.research).filter(Boolean));
+      const resourceKey = research.specification && research.specification.apiFamily && research.specification.apiFamily.resource_key;
+      const resourceGroup = correlation.resources.find((item) => item.resource_key === resourceKey);
+      if (resourceGroup) {
+        _addDetailRow(sectionResearch, "Session correlation", [
+          "hosts=" + resourceGroup.hosts.join(", "),
+          "planes=" + resourceGroup.planes.join(", "),
+          "methods=" + resourceGroup.methods.join(", "),
+        ].join(" | "), { multiline: true });
+      }
+      if (correlation.findings.length) {
+        _addDetailRow(sectionResearch, "Correlation findings", correlation.findings.map((f) => f.category + " (" + f.confidence + ")").join(", "), { multiline: true });
+      }
+    }
+    if (research.findings && research.findings.length) {
+      _addDetailRow(sectionResearch, "Differentials", research.findings.map((f) => f.category + " (" + f.confidence + ")").join(", "));
+      _addDetailRow(sectionResearch, "Next questions", research.findings.map((f) => f.suggestedNextQuestion).join(" | "), { multiline: true });
+    } else {
+      _addDetailRow(sectionResearch, "Differentials", "none");
+    }
+    _addDetailRow(sectionResearch, "AI status", research.hypotheses && research.hypotheses.status || "disabled");
+    if (research.hypotheses && research.hypotheses.hypotheses && research.hypotheses.hypotheses.length) {
+      _addDetailRow(sectionResearch, "Hypotheses", research.hypotheses.hypotheses.map((h) => h.title).join(" | "), { multiline: true });
+      const planCount = research.hypotheses.hypotheses.reduce((count, h) => count + (h.test_plans ? h.test_plans.length : 0), 0);
+      _addDetailRow(sectionResearch, "Manual test plans", String(planCount) + " (execution is not supported)");
+    } else {
+      _addDetailRow(sectionResearch, "Hypotheses", state.aiEnabled ? "none" : "AI disabled");
+    }
+    detailFields.appendChild(sectionResearch);
+  }
+
+  // ── E. Diagnostics (collapsed by default) ─────────────────────────────────
   const diag = r.diagnostics || {};
   const sectionDiag = _makeDetailSection("Diagnostics", { collapsible: true, collapsed: true });
   _addDetailRow(sectionDiag, "Provider inferred?",      diag.providerInferred     ? "yes" : "no");
@@ -1011,12 +1110,16 @@ function execCommandCopy(text) {
  * @param {RequestEntry} entry
  * @returns {string}
  */
+function safeExportUrl(url) {
+  return typeof Research !== "undefined" && Research.sanitizeUrl ? Research.sanitizeUrl(url) : "";
+}
+
 function entryToCsvRow(entry) {
   const r = entry.result;
   const en = r.enrichment || {};
   const cols = [
     entry.time,
-    entry.url || "",
+    safeExportUrl(entry.url),
     entry.isBatchSub ? "yes" : "no",
     entry.batchName || "",
     entry.method,
@@ -1051,7 +1154,7 @@ function copyAllVisible() {
     const r = e.result;
     rows.push([
       e.time,
-      e.url || "",
+      safeExportUrl(e.url),
       e.isBatchSub ? "yes" : "no",
       e.batchName || "",
       e.method,
@@ -1075,7 +1178,7 @@ function copyAllVisible() {
 function copyEntryDetail(entry) {
   const r = entry.result;
   const lines = [
-    "URL: "                + (entry.url || ""),
+    "URL: "                + safeExportUrl(entry.url),
     "Time: "               + entry.time,
     "Method: "             + entry.method,
     "Host: "               + entry.host,
@@ -1108,22 +1211,72 @@ function copyEntryDetail(entry) {
 }
 
 /** Trigger a CSV download of all requests. */
-function saveCSV() {
-  if (state.requests.length === 0) return;
-  const lines = [CSV_HEADER];
-  state.requests.forEach((e) => lines.push(entryToCsvRow(e)));
-  const csv = lines.join("\r\n");
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+function _downloadText(contents, mimeType, filename) {
+  const blob = new Blob([contents], { type: mimeType });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement("a");
-  const ts   = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
-  a.href     = url;
-  a.download = "apispy-" + ts + ".csv";
+  a.href = url;
+  a.download = filename;
   a.style.display = "none";
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
   URL.revokeObjectURL(url);
+}
+
+function saveCSV() {
+  if (state.requests.length === 0) return;
+  const lines = [CSV_HEADER];
+  state.requests.forEach((e) => lines.push(entryToCsvRow(e)));
+  const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  _downloadText(lines.join("\r\n"), "text/csv;charset=utf-8;", "apispy-" + ts + ".csv");
+}
+
+function updateAiButton() {
+  if (!btnAi) return;
+  btnAi.textContent = state.aiEnabled ? "AI: Local" : "AI: Off";
+  btnAi.classList.toggle("active", state.aiEnabled);
+  btnAi.setAttribute("aria-pressed", state.aiEnabled ? "true" : "false");
+}
+
+async function refreshResearchHypotheses() {
+  if (typeof Research === "undefined") return;
+  for (const entry of state.requests) {
+    if (!entry.research) continue;
+    entry.research.hypotheses = await Research.runHypothesisProvider(
+      Research.mockLocalAdapter,
+      entry.research,
+      { enabled: state.aiEnabled }
+    );
+    for (const hypothesis of entry.research.hypotheses.hypotheses) {
+      hypothesis.test_plans = Research.generateTestPlans(entry.research, [hypothesis]);
+    }
+  }
+  if (state.selectedIdx != null && state.requests[state.selectedIdx]) {
+    showDetail(state.requests[state.selectedIdx]);
+  }
+}
+
+function saveResearchJSON() {
+  if (typeof Research === "undefined") return;
+  const events = state.requests.map((entry) => entry.research).filter(Boolean);
+  if (events.length === 0) {
+    flashStatus("No research events to export", 2500);
+    return;
+  }
+  let captureTruncated = false;
+  try {
+    captureTruncated = localStorage.getItem("apispy_sweep_truncated") === "1";
+  } catch (_) {
+    captureTruncated = true;
+  }
+  const session = Research.exportSession("apispy-research-session", events, {
+    aiEnabled: state.aiEnabled,
+    providerName: state.aiEnabled ? Research.mockLocalAdapter.name : null,
+    captureTruncated,
+  });
+  const ts = new Date().toISOString().slice(0, 19).replace(/[T:]/g, "-");
+  _downloadText(JSON.stringify(session, null, 2), "application/json;charset=utf-8;", "apispy-research-" + ts + ".json");
 }
 
 // ── Draggable detail panel resize ────────────────────────────────────────────
@@ -1354,6 +1507,21 @@ function attachUIListeners() {
   // Save CSV
   btnCsv.addEventListener("click", saveCSV);
 
+  // AI remains off by default and uses only the deterministic local adapter.
+  btnAi.addEventListener("click", async () => {
+    state.aiEnabled = !state.aiEnabled;
+    try {
+      localStorage.setItem(RESEARCH_AI_ENABLED_KEY, state.aiEnabled ? "1" : "0");
+    } catch (_) {
+      state.aiEnabled = false;
+    }
+    updateAiButton();
+    await refreshResearchHypotheses();
+    flashStatus(state.aiEnabled ? "Local hypothesis generation enabled" : "AI disabled", 2500);
+  });
+
+  btnResearchJson.addEventListener("click", saveResearchJSON);
+
   // Clear
   btnClear.addEventListener("click", () => {
     state.requests = [];
@@ -1364,6 +1532,9 @@ function attachUIListeners() {
     updateCountBadge();
     toggleEmptyState();
     localStorage.removeItem("apispy_requests");
+    localStorage.removeItem("apispy_sweep_entries");
+    localStorage.removeItem("apispy_sweep_truncated");
+    localStorage.removeItem("apispy_sweep_storage_error");
   });
 
   // Detail panel buttons

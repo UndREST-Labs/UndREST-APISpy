@@ -39,6 +39,7 @@ apispy/
 │   │   ├── normalizer.js       ← Extracts & normalises request fields; supports pack normaliser hooks
 │   │   ├── loader.js           ← Pack-aware shard loader (v1.0.0/v2.0.0 manifest, user pack selection)
 │   │   ├── matcher.js          ← Classifies requests against the index
+│   │   ├── request-pipeline.js ← Shared panel/sweep shard resolution and retention
 │   │   └── azure-enrichment.js ← Azure provider-operation enrichment (optional; gracefully absent)
 │   ├── data/
 │   │   ├── manifest.json          ← Pack manifest (schema 2.0.0): lists packs + their shards + source metadata
@@ -60,7 +61,8 @@ apispy/
 │   ├── test_filters.js
 │   ├── test_loader.js
 │   ├── test_normalizer.js
-│   └── test_matcher.js
+│   ├── test_matcher.js
+│   └── test_capture_pipeline.js
 └── docs/
     └── ADDING_A_PACK.md    ← Step-by-step guide for adding a new API pack
 ```
@@ -77,6 +79,44 @@ packs, so multiple platforms can coexist without increasing startup cost for
 platforms the user doesn't need.
 
 To add a new pack, see **[docs/ADDING_A_PACK.md](../docs/ADDING_A_PACK.md)**.
+
+### Microsoft Graph readiness
+
+The built-in `microsoft-graph` normaliser uses the same pack hook described
+above. It accepts only HTTPS on the exact host `graph.microsoft.com`, preserves
+`/v1.0` and `/beta`, and conservatively templates GUID, numeric, and email-like
+identifier segments. Ambiguous path slugs remain literal.
+
+No authoritative Microsoft Graph SpecQL pack is currently bundled, so Graph
+requests are captured as **No spec match** rather than being assigned invented
+route metadata. APISpy performs no runtime specification fetch. Real Graph
+classification begins only after an authoritative generated pack is checked in
+and enabled.
+
+---
+
+## Research mode and trust boundaries
+
+APISpy has an optional, opt-in research layer that enriches a request with deterministic metadata before an AI model sees it. The extension does not send raw bearer tokens, cookies, refresh tokens, SAS signatures, API keys, or client secrets to any external model. A request is sanitised first, the JWT payload is locally decoded only for non-secret metadata (issuer, tenant ID, app/client ID, audience, delegated vs application context, scopes/roles), and the output is kept in a machine-readable research event.
+
+The model is advisory only. It does not directly trigger network actions and is never allowed to control the browser or issue HTTP requests. APISpy can run fully offline with AI disabled, and exported research sessions keep redaction provenance alongside the findings and generated hypotheses.
+
+A minimal research event contains:
+
+- timestamp / correlation ID
+- method + hostname + normalised path + original path
+- sanitised query parameters
+- SpecQL classification state (exact, version mismatch, provider known, portal-only candidate, unknown)
+- optional SpecQL resource-family / version-lineage context and bounded session correlation
+- deterministic differential findings
+- model-generated hypotheses in a strict machine-readable schema
+- provenance and redaction status
+
+Use **AI: Off / AI: Local** to control hypothesis generation and **Save Research** to export sanitised JSON. Generated test plans are descriptions only and always carry `requires_manual_approval: true` plus `execution: "not_supported"`. SpecQL 3.2.0 shards can add resource-family hierarchy and version-lineage metadata for deterministic session correlation; older 3.1.0/3.0.0 shards continue to load without those optional fields.
+
+See [`docs/RESEARCH_ARCHITECTURE.md`](../docs/RESEARCH_ARCHITECTURE.md) for the event schema, data flow, component ownership, and phased roadmap.
+
+This keeps the system aligned with the principle: **models advise, deterministic controls execute**.
 
 ---
 
@@ -258,7 +298,7 @@ If a provider shard fails to load at runtime, the affected entry is shown as a r
 
 The extension ships with pre-extracted shard files in `data/shards/`.  
 These are `.min.json` files derived from the SpeQL grouped/sharded export
-(`api-index-grouped.json`, schema 3.0.0), one file per Azure provider namespace.
+(`api-index-grouped.json`, schema 3.0.0 or additive 3.1.0), one file per Azure provider namespace. Schema 3.1.0 may include optional documented auth, parameter-name, and schema-summary metadata used by Research Mode.
 
 A top-level `data/manifest.json` is read once on startup.  When a request arrives
 for a provider like `Microsoft.Storage`, only the `Microsoft.Storage.min.json`
@@ -344,15 +384,11 @@ If `azure-provider-ops.json` is absent or fails to load, the enrichment module i
 
 ---
 
-- **Path template matching for non-ARM APIs.**  
-  For Azure Resource Manager URLs the normalizer applies structural ARM rules:
-  subscription/resource-group/tenant/location/management-group scope segments are
-  replaced with canonical placeholders, and name-position segments within the
-  provider resource path are replaced with `{name}`.  This significantly reduces
-  false *Unknown route* results for ARM paths.  However, non-ARM API paths (e.g.
-  Microsoft Graph `v1.0/…` paths) only receive basic normalisation (GUID and
-  pure-integer segment replacement), so many Graph routes still appear as
-  *Unknown route* even when the provider shard is bundled.
+- **Authoritative non-ARM route data.**
+  Microsoft Graph request normalisation is ready, but route classification is
+  intentionally unavailable until SpecQL produces an authoritative generated
+  Graph pack. APISpy does not fabricate route templates or fetch specifications
+  at runtime.
 
 - **No background sync.**  
   The bundled index is a point-in-time snapshot.  There is no automatic update
@@ -367,7 +403,7 @@ If `azure-provider-ops.json` is absent or fails to load, the enrichment module i
 ## Future planned enhancements
 
 1. **Remote artifact updates** — pull latest shards from GitHub Pages / artifact store.
-2. **Graph API support** — add Microsoft Graph spec shards.
+2. **Graph API pack** — bundle an authoritative generated Microsoft Graph SpecQL export.
 3. **Export timestamp display** — show index freshness in the panel.
 4. **Filter persistence** — remember the last-used filter across panel opens.
 
@@ -381,4 +417,3 @@ If `azure-provider-ops.json` is absent or fails to load, the enrichment module i
 
 APISpy does **not** modify the SpeQL export pipeline.  It consumes the
 already-produced output files.
-

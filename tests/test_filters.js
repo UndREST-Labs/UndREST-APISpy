@@ -29,6 +29,10 @@ console.log("\n=== Filters.isInScopeHost ===");
 assert(Filters.isInScopeHost("management.azure.com"),       "exact: management.azure.com");
 assert(Filters.isInScopeHost("MANAGEMENT.AZURE.COM"),       "case-insensitive exact");
 assert(Filters.isInScopeHost("graph.microsoft.com"),        "exact: graph.microsoft.com");
+assert(!Filters.isInScopeHost("api.graph.microsoft.com"),   "Graph lookalike subdomain rejected");
+assert(!Filters.isInScopeHost("graph.microsoft.com.example.org"), "Graph suffix lookalike rejected");
+assert(!Filters.isInScopeHost("arbitrary.microsoft.com"),   "arbitrary microsoft.com host rejected");
+assert(!Filters.isInScopeHost("arbitrary.microsoftonline.com"), "arbitrary microsoftonline.com host rejected");
 assert(Filters.isInScopeHost("storage.blob.core.windows.net"), "suffix: .windows.net");
 assert(Filters.isInScopeHost("contoso.azure.com"),          "suffix: .azure.com");
 assert(!Filters.isInScopeHost("example.com"),               "out-of-scope: example.com");
@@ -48,6 +52,21 @@ assert(inScope.reason === "host_match",  "management.azure.com → reason=host_m
 
 const outScope = Filters.classifyScope("https://example.com/api/data");
 assert(outScope.inScope === false,       "example.com → inScope=false");
+
+const graphScope = Filters.classifyScope("https://graph.microsoft.com/v1.0/users");
+assert(graphScope.inScope === true,      "HTTPS Microsoft Graph request is in scope");
+assert(graphScope.reason === "host_match", "HTTPS Microsoft Graph uses exact host match");
+
+const graphHttp = Filters.classifyScope("http://graph.microsoft.com/v1.0/users");
+assert(graphHttp.inScope === false,      "HTTP Microsoft Graph request is out of scope");
+assert(graphHttp.reason === "unsupported_graph_origin", "HTTP Microsoft Graph reports unsupported origin");
+
+const graphCustomPort = Filters.classifyScope("https://graph.microsoft.com:444/v1.0/users");
+assert(graphCustomPort.inScope === false, "Microsoft Graph custom port is out of scope");
+assert(graphCustomPort.reason === "unsupported_graph_origin", "Graph custom port reports unsupported origin");
+
+const graphLookalike = Filters.classifyScope("https://api.graph.microsoft.com/v1.0/users");
+assert(graphLookalike.inScope === false, "Graph lookalike host is out of scope");
 
 const badUrl = Filters.classifyScope("not-a-url");
 assert(badUrl.inScope === false,         "bad URL → inScope=false");

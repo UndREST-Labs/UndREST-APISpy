@@ -30,25 +30,69 @@ chrome.devtools.panels.create(
 // No async shard loading needed at restore time because all matching is done
 // here as requests arrive.
 
-// In-memory buffer of processed entries — written to localStorage after each
-// entry so the data is always up-to-date without O(n^2) read/parse overhead.
+// In-memory buffer of processed entries. Persistence is bounded by both entry
+// count and serialized size so browser storage failure cannot silently freeze a
+// stale sweep snapshot.
 const _sweepBuffer = [];
+const MAX_SWEEP_ENTRIES = 1000;
+const MAX_SWEEP_STORAGE_CHARS = 3500000;
+let _sweepTruncated = false;
 
 // Kick off enrichment data load — optional; failure is silently ignored.
 if (typeof AzureEnrichment !== "undefined") {
   AzureEnrichment.load().catch(() => {});
 }
 
-function _flushSweepBuffer() {
+function _isResearchAiEnabled() {
   try {
-    localStorage.setItem("apispy_sweep_entries", JSON.stringify(_sweepBuffer));
+    return localStorage.getItem("apispy_research_ai_enabled") === "1";
   } catch (_) {
-    // localStorage quota exceeded — the last successful write is still valid.
+    return false;
+  }
+}
+
+function _flushSweepBuffer() {
+  let truncated = _sweepTruncated;
+  try {
+    truncated = truncated || localStorage.getItem("apispy_sweep_truncated") === "1";
+  } catch (_) {
+    truncated = true;
+  }
+  let serialized = JSON.stringify(_sweepBuffer);
+
+  while (serialized.length > MAX_SWEEP_STORAGE_CHARS && _sweepBuffer.length > 1) {
+    const dropCount = Math.max(1, Math.ceil(_sweepBuffer.length * 0.1));
+    _sweepBuffer.splice(0, dropCount);
+    truncated = true;
+    _sweepTruncated = true;
+    serialized = JSON.stringify(_sweepBuffer);
+  }
+
+  while (_sweepBuffer.length > 0) {
+    try {
+      localStorage.setItem("apispy_sweep_entries", serialized);
+      localStorage.setItem("apispy_sweep_truncated", truncated ? "1" : "0");
+      localStorage.removeItem("apispy_sweep_storage_error");
+      return;
+    } catch (_) {
+      const dropCount = Math.max(1, Math.ceil(_sweepBuffer.length * 0.25));
+      _sweepBuffer.splice(0, dropCount);
+      truncated = true;
+      _sweepTruncated = true;
+      serialized = JSON.stringify(_sweepBuffer);
+    }
+  }
+
+  try {
+    localStorage.setItem("apispy_sweep_truncated", "1");
+    localStorage.setItem("apispy_sweep_storage_error", "1");
+  } catch (_) {
+    // Storage is completely unavailable; the in-memory buffer remains bounded.
   }
 }
 
 /**
- * Build and store a compact processed entry for a single ARM request.
+ * Build and store a compact processed entry for a single in-scope request.
  * Mirrors the logic in panel.js's onRequestFinished / buildEntry.
  *
  * @param {object} req   HAR-style request object (from onRequestFinished or synthetic).
@@ -60,13 +104,6 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
   const method = req.request && req.request.method;
   if (!url) return;
 
-  // Filter to management.azure.com — the ARM control-plane endpoint.
-  try {
-    if (new URL(url).hostname.toLowerCase() !== "management.azure.com") return;
-  } catch (_) {
-    return;
-  }
-
   const time  = req.startedDateTime
     ? new Date(req.startedDateTime).toLocaleTimeString()
     : "--:--:--";
@@ -74,24 +111,9 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
   const scope = Filters.classifyScope(url);
   const norm  = Normalizer.normalise(url, method);
 
-  let result;
-  if (!scope.inScope) {
-    result = Matcher.classify(norm, null, { inScope: false });
-  } else if (!norm.ok) {
-    result = Matcher.classify(norm, null, { inScope: true });
-  } else {
-    const ns = Matcher.inferProviderNamespace(norm.pathname);
-    let shard = null;
-    let shardLoadError = null;
-    if (ns) {
-      try {
-        shard = await Loader.loadShard(ns);
-      } catch (err) {
-        shardLoadError = err && err.message ? err.message : String(err);
-      }
-    }
-    result = Matcher.classify(norm, shard, { inScope: true, shardLoadError });
-  }
+  const classified = await RequestPipeline.classifyRequest(norm, scope);
+  const result = classified.result;
+  const packId = classified.packId;
 
   // Optional Azure enrichment (only when loaded — graceful fallback otherwise)
   let enrichment = null;
@@ -101,7 +123,7 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
     try {
       const em = AzureEnrichment.matchRequest(norm);
       if (em) {
-        enrichment = em.record;
+        enrichment = em.enrichment;
         enrichmentConfidence = em.confidence;
         enrichmentParts = em.parts;
         // Promote status when no exact/version match but enrichment is confident
@@ -115,15 +137,45 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
     } catch (_) { /* enrichment is optional */ }
   }
 
-  // Only store entries where a provider namespace was identified, or ARM root
-  // routes — same filter as panel.js's onRequestFinished.
-  if (result.provider_namespace === null && result.status !== Matcher.STATUS.ARM_ROOT_ROUTE) {
+  // Keep the same provider, ARM-root, and Graph readiness entries as panel.js.
+  if (!RequestPipeline.shouldRetain(result, norm)) {
     return;
+  }
+
+  result.enrichment = enrichment;
+  result.enrichmentConfidence = enrichmentConfidence;
+  result.enrichmentParts = enrichmentParts;
+
+  let research = null;
+  if (typeof Research !== "undefined") {
+    const responseSchema = await Research.responseSchemaSummary(req);
+    research = Research.buildResearchEvent({
+      url,
+      method,
+      timestamp: req.startedDateTime || new Date().toISOString(),
+      source: "portal_sweep",
+      packId,
+      norm,
+      result,
+      headers: req.request && req.request.headers || [],
+      requestBodyText: req.request && req.request.postData && req.request.postData.text,
+      responseStatus: req.response && req.response.status,
+      responseContentType: Research.getHeader(req.response && req.response.headers, "content-type"),
+      responseSchema,
+    });
+    research.hypotheses = await Research.runHypothesisProvider(
+      Research.mockLocalAdapter,
+      research,
+      { enabled: _isResearchAiEnabled() }
+    );
+    for (const hypothesis of research.hypotheses.hypotheses) {
+      hypothesis.test_plans = Research.generateTestPlans(research, [hypothesis]);
+    }
   }
 
   const entry = {
     time,
-    url,
+    url: typeof Research !== "undefined" ? Research.sanitizeUrl(url) : null,
     method:     norm.ok ? norm.method        : (method || "?").toUpperCase(),
     host:       norm.ok ? norm.host          : "?",
     pathname:   norm.ok ? norm.pathname      : "?",
@@ -132,21 +184,28 @@ async function _processSweepRequest(req, isBatchSub, batchName) {
     isBatchSub: isBatchSub || false,
     batchName:  batchName  != null ? String(batchName) : null,
     result: {
-      status:             result.status,
-      reason:             result.reason             || null,
-      label:              result.label              || null,
-      provider_namespace: result.provider_namespace || null,
-      matched_route_key:  result.matched_route_key  || null,
-      matched_versions:   result.matched_versions   || null,
-      shard_name:         result.shard_name         || null,
-      error:              result.error              || null,
-      enrichment:           enrichment,
-      enrichmentConfidence: enrichmentConfidence,
-      enrichmentParts:      enrichmentParts,
+      status:               result.status,
+      reason:               result.reason             || null,
+      label:                result.label              || null,
+      provider_namespace:   result.provider_namespace || null,
+      matched_route_key:    result.matched_route_key  || null,
+      matched_versions:     result.matched_versions   || null,
+      available_methods:    result.available_methods  || null,
+      operation_metadata:   result.operation_metadata || null,
+      shard_name:           result.shard_name         || null,
+      error:                result.error              || null,
+      enrichment,
+      enrichmentConfidence,
+      enrichmentParts,
     },
+    research,
   };
 
   _sweepBuffer.push(entry);
+  if (_sweepBuffer.length > MAX_SWEEP_ENTRIES) {
+    _sweepBuffer.shift();
+    _sweepTruncated = true;
+  }
   _flushSweepBuffer();
 }
 
